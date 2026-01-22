@@ -15,6 +15,7 @@
 #include "memmap.h" // SYMBOL
 #include "output.h" // dprintf
 #include "paravirt.h" // qemu_preinit
+#include "romfile.h" // const_romfile_add_int
 #include "stacks.h" // wait_threads
 #include "std/acpi.h" // RSDP_SIGNATURE
 #include "std/bda.h" // struct bios_data_area_s
@@ -63,6 +64,19 @@ static void
 csm_maininit(struct bregs *regs)
 {
     interface_init();
+
+    // Publish the loader-provided extra root bus list. A non-zero
+    // ExtraPciRootListPointer means the loader supplied authoritative info,
+    // including the "no extras" case (Count==0). Without it we leave the
+    // romfile out of the table entirely.
+    if (csm_compat_table.ExtraPciRootListPointer) {
+        const_romfile_add_int("etc/extra-pci-roots",
+                              csm_compat_table.ExtraPciRootListCount);
+        if (csm_compat_table.ExtraPciRootListCount)
+            const_romfile_add("etc/extra-pci-roots-list",
+                              (void *)csm_compat_table.ExtraPciRootListPointer,
+                              csm_compat_table.ExtraPciRootListCount);
+    }
     pci_probe_devices();
 
     csm_compat_table.PnPInstallationCheckSegment = SEG_BIOS;

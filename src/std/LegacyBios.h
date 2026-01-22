@@ -248,6 +248,19 @@ typedef struct {
   /// Size of persistent allocation in high (>1MiB) memory
   ///
   UINT32                            HiPermanentMemorySize;
+
+  ///
+  /// Extension, not part of the EFI CSM specification. 32-bit physical
+  /// address of a u8 array of extra PCI root bus numbers (i.e., roots other
+  /// than bus 0). Zero if the loader does not provide a list.
+  ///
+  UINT32                            ExtraPciRootListPointer;
+
+  ///
+  /// Extension, not part of the EFI CSM specification. Number of entries in
+  /// the array pointed to by ExtraPciRootListPointer.
+  ///
+  UINT8                             ExtraPciRootListCount;
 } EFI_COMPATIBILITY16_TABLE;
 
 ///
