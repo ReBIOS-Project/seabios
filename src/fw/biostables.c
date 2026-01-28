@@ -60,7 +60,8 @@ copy_mptable(void *pos)
     if (checksum(pos, sizeof(*p)) != 0)
         return;
     u32 length = p->length * 16;
-    u16 mpclength = ((struct mptable_config_s *)p->physaddr)->length;
+    struct mptable_config_s *config = (void*)p->physaddr;
+    u32 mpclength = config->length + config->exttable_length;
     if (length + mpclength > BUILD_MAX_MPTABLE_FSEG) {
         dprintf(1, "Skipping MPTABLE copy due to large size (%d bytes)\n"
                 , length + mpclength);
