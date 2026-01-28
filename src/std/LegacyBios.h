@@ -965,6 +965,10 @@ typedef struct {
                                                                   ///< memory may have been discovered.
   UINT32                            UnconventionalDeviceTable;    ///< Information to boot off an unconventional device like a PARTIES partition. Type
                                                                   ///< UD_TABLE is defined below.
+  //
+  // Extension, not part of the EFI CSM specification.
+  //
+  UINT32                            MpTable;                      ///< The location of the MP floating pointer structure. < 4G range.
 } EFI_TO_COMPATIBILITY16_BOOT_TABLE;
 
 ///
