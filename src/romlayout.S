@@ -684,6 +684,26 @@ entry_iret_official:
         ORG 0xff54
         IRQ_ENTRY_ARG 05
 
+        ORG 0xff82
+        .global entry_phoenix_a20
+entry_phoenix_a20:
+        // Phoenix-compatible A20 gate entry point.
+        // Input: AH=08h, AL=00h disable / 01h enable / 02h query.
+        // Output: AH=AL=status for query (HIMEM.SYS reads AH).  AH
+        // preserved otherwise.
+        // See PhoenixPTLSig in misc.c.
+        cmpb $0x08, %ah
+        jne 2f
+        movb $0x24, %ah
+        cmpb $0x02, %al
+        je 1f
+        int $0x15
+        movb $0x08, %ah
+        lretw
+1:      int $0x15
+        movb %al, %ah
+2:      lretw
+
         ORG 0xfff0 // Power-up Entry Point
         .global reset_vector
 reset_vector:
