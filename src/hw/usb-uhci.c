@@ -45,17 +45,7 @@ uhci_hub_detect(struct usbhub_s *hub, u32 port)
 {
     struct usb_uhci_s *cntl = container_of(hub->cntl, struct usb_uhci_s, usb);
     u16 ioport = cntl->iobase + USBPORTSC1 + port * 2;
-    u16 status = inw(ioport);
-    if (!(status & USBPORTSC_CCS))
-        // No device found.
-        return 0;
-
-    // XXX - if just powered up, need to wait for USB_TIME_ATTDB?
-
-    // Begin reset on port
-    outw(USBPORTSC_PR, ioport);
-    msleep(USB_TIME_DRSTR);
-    return 1;
+    return (inw(ioport) & USBPORTSC_CCS) ? 1 : 0;
 }
 
 // Reset device on port
@@ -64,6 +54,10 @@ uhci_hub_reset(struct usbhub_s *hub, u32 port)
 {
     struct usb_uhci_s *cntl = container_of(hub->cntl, struct usb_uhci_s, usb);
     u16 ioport = cntl->iobase + USBPORTSC1 + port * 2;
+
+    // Reset port
+    outw(USBPORTSC_PR, ioport);
+    msleep(USB_TIME_DRSTR);
 
     // Finish reset on port; the port state may take up to 64 bit times
     // (about 43us at low speed) to follow.

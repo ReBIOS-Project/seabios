@@ -423,19 +423,29 @@ usb_hub_port_setup(void *data)
     struct usbhub_s *hub = usbdev->hub;
     u32 port = usbdev->port;
 
+    // Wait for a connection that holds for the attach debounce interval
+    // (USB 2.0 7.1.7.3), which restarts on a disconnect.
+    int connected = 0;
+    u32 debounceend = 0;
     for (;;) {
-        // Detect if device present (and possibly start reset)
         int ret = hub->op->detect(hub, port);
-        if (ret > 0)
-            // Device connected.
-            break;
-        if (ret < 0 || timer_check(hub->detectend))
-            // No device found.
+        if (ret < 0)
             goto done;
+        if (ret > 0) {
+            if (!connected) {
+                connected = 1;
+                debounceend = timer_calc(USB_TIME_ATTDB);
+            } else if (timer_check(debounceend)) {
+                break;
+            }
+        } else {
+            connected = 0;
+            if (timer_check(hub->detectend))
+                // No device found.
+                goto done;
+        }
         msleep(5);
     }
-
-    // XXX - wait USB_TIME_ATTDB time?
 
     // Reset port and determine device speed
     mutex_lock(&hub->cntl->resetlock);
