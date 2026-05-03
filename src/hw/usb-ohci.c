@@ -62,22 +62,33 @@ static int
 ohci_hub_reset(struct usbhub_s *hub, u32 port)
 {
     struct usb_ohci_s *cntl = container_of(hub->cntl, struct usb_ohci_s, usb);
-    writel(&cntl->regs->roothub_portstatus[port], RH_PS_PRS);
+    // The controller drives each port reset for 10ms; resets from root
+    // ports must total USB_TIME_DRSTR, which may be made of pulses that
+    // long (USB 2.0 7.1.7.5).
     u32 sts;
-    u32 end = timer_calc(USB_TIME_DRSTR * 2);
-    for (;;) {
-        sts = readl(&cntl->regs->roothub_portstatus[port]);
-        if (!(sts & RH_PS_PRS))
-            // XXX - need to ensure USB_TIME_DRSTR time in reset?
-            break;
-        if (timer_check(end)) {
-            // Timeout.
-            warn_timeout();
-            ohci_hub_disconnect(hub, port);
-            return -1;
+    int i;
+    for (i = 0; i < USB_TIME_DRSTR / USB_TIME_DRST; i++) {
+        writel(&cntl->regs->roothub_portstatus[port], RH_PS_PRS);
+        u32 end = timer_calc(USB_TIME_DRSTR * 2);
+        for (;;) {
+            sts = readl(&cntl->regs->roothub_portstatus[port]);
+            if (sts & RH_PS_PRSC)
+                break;
+            if (timer_check(end)) {
+                // Timeout.
+                warn_timeout();
+                ohci_hub_disconnect(hub, port);
+                return -1;
+            }
+            yield();
         }
-        yield();
+        // Acknowledge reset complete change bit.
+        writel(&cntl->regs->roothub_portstatus[port], RH_PS_PRSC);
     }
+
+    // Observe reset recovery.
+    msleep(USB_TIME_RSTRCY);
+    sts = readl(&cntl->regs->roothub_portstatus[port]);
 
     if ((sts & (RH_PS_CCS|RH_PS_PES)) != (RH_PS_CCS|RH_PS_PES))
         // Device no longer present
