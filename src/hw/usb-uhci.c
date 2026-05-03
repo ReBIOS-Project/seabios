@@ -65,9 +65,10 @@ uhci_hub_reset(struct usbhub_s *hub, u32 port)
     struct usb_uhci_s *cntl = container_of(hub->cntl, struct usb_uhci_s, usb);
     u16 ioport = cntl->iobase + USBPORTSC1 + port * 2;
 
-    // Finish reset on port
+    // Finish reset on port; the port state may take up to 64 bit times
+    // (about 43us at low speed) to follow.
     outw(0, ioport);
-    udelay(6); // 64 high-speed bit times
+    udelay(50);
     u16 status = inw(ioport);
     if (!(status & USBPORTSC_CCS))
         // No longer connected
