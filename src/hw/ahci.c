@@ -622,7 +622,7 @@ static int ahci_port_setup(struct ahci_port_s *port)
                               , ata_extract_model(model, MAXMODEL, buffer)
                               , ata_extract_version(buffer)
                               , (u32)adjsize, adjprefix);
-        port->prio = bootprio_find_ata_device(ctrl->pci_tmp, pnr, 0);
+        port->prio = bootprio_find_ahci_device(ctrl->pci_tmp, pnr, 0);
 
         s8 multi_dma = -1;
         s8 pio_mode = -1;
@@ -695,7 +695,7 @@ static int ahci_port_setup(struct ahci_port_s *port)
                               , port->pnr
                               , ata_extract_model(model, MAXMODEL, buffer)
                               , ata_extract_version(buffer));
-        port->prio = bootprio_find_ata_device(ctrl->pci_tmp, pnr, 0);
+        port->prio = bootprio_find_ahci_device(ctrl->pci_tmp, pnr, 1);
     }
     boot_lchs_find_ata_device(ctrl->pci_tmp, pnr, 0, &(port->drive.lchs));
     return 0;

@@ -34,6 +34,7 @@ int bootprio_find_mmio_device(void *mmio);
 int bootprio_find_scsi_device(struct pci_device *pci, int target, int lun);
 int bootprio_find_scsi_mmio_device(void *mmio, int target, int lun);
 int bootprio_find_ata_device(struct pci_device *pci, int chanid, int slave);
+int bootprio_find_ahci_device(struct pci_device *pci, int port, int cdrom);
 int bootprio_find_fdc_device(struct pci_device *pci, int port, int fdid);
 int bootprio_find_pci_rom(struct pci_device *pci, int instance);
 int bootprio_find_named_rom(const char *name, int instance);
@@ -121,6 +122,7 @@ struct cb_header *find_cb_table(void);
 // fw/csm.c
 int csm_bootprio_fdc(struct pci_device *pci, int port, int fdid);
 int csm_bootprio_ata(struct pci_device *pci, int chanid, int slave);
+int csm_bootprio_drive(struct pci_device *pci, int cdrom);
 int csm_bootprio_pci(struct pci_device *pci);
 
 // fw/mptable.c

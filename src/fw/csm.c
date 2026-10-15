@@ -402,6 +402,28 @@ int csm_bootprio_ata(struct pci_device *pci, int chanid, int slave)
     return csm_prio_to_seabios(bbs[index].BootPriority);
 }
 
+// The entry of the drive's controller and type; drives the firmware did not
+// list, such as those of CD drives without media, come after the others.
+int csm_bootprio_drive(struct pci_device *pci, int cdrom)
+{
+    if (!csm_boot_table)
+        return -1;
+    BBS_TABLE *bbs = (void *)csm_boot_table->BbsTable;
+    u16 type = cdrom ? BBS_CDROM : BBS_HARDDISK;
+    int i;
+
+    for (i = 5; i < csm_boot_table->NumberBbsEntries; i++) {
+        if (pci->bdf == pci_to_bdf(bbs[i].Bus, bbs[i].Device, bbs[i].Function)
+            && bbs[i].DeviceType == type) {
+            dprintf(3, "CSM bootprio for %s on PCI(%d,%d,%d) is %d\n",
+                    cdrom ? "CD" : "disk", bbs[i].Bus, bbs[i].Device,
+                    bbs[i].Function, bbs[i].BootPriority);
+            return csm_prio_to_seabios(bbs[i].BootPriority);
+        }
+    }
+    return -1;
+}
+
 int csm_bootprio_fdc(struct pci_device *pci, int port, int fdid)
 {
     if (!csm_boot_table)
