@@ -430,6 +430,11 @@ build_usb_path(char *buf, int max, struct usbhub_s *hub)
 
 int bootprio_find_usb(struct usbdevice_s *usbdev, int lun)
 {
+    if (CONFIG_CSM) {
+        // The BBS table gives priorities to the controllers.
+        struct pci_device *pci = usbdev->hub->cntl->pci;
+        return pci ? csm_bootprio_pci(pci) : -1;
+    }
     if (!CONFIG_BOOTORDER)
         return -1;
     // Find usb - examples:
