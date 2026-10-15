@@ -27,11 +27,15 @@
 #include "std/disk.h" // struct dpte_s
 #include "string.h" // checksum
 #include "util.h" // process_floppy_op
+#include "x86.h" // cr0_vm86_read
 
 u8 FloppyCount VARFSEG;
 u8 CDCount;
 struct drive_s *IDMap[3][BUILD_MAX_EXTDRIVE] VARFSEG;
 u8 *bounce_buf_fl VARFSEG;
+u8 *v86_bounce_buf_fl VARFSEG;
+
+#define V86_BOUNCE_SIZE PAGE_SIZE
 
 struct drive_s *
 getDrive(u8 exttype, u8 extdriveoffset)
@@ -507,6 +511,15 @@ fill_edd(struct segoff_s edd, struct drive_s *drive_fl)
 void
 block_setup(void)
 {
+    // In the low memory zone, which V86 monitors map one to one, as they
+    // must for the BIOS to work - but only where that zone is upper memory,
+    // so as to cost no conventional memory.
+    if (CONFIG_MALLOC_UPPERMEMORY) {
+        v86_bounce_buf_fl = memalign_low(PAGE_SIZE, V86_BOUNCE_SIZE);
+        if (!v86_bounce_buf_fl)
+            warn_noalloc();
+    }
+
     floppy_setup();
     ata_setup();
     ahci_setup();
@@ -615,6 +628,86 @@ process_op_16(struct disk_op_s *op)
     }
 }
 
+// Whether a request from V86 mode must be bounced: its buffer address is
+// linear, and the V86 monitor's paging may map it anywhere, while devices
+// take it as physical. Floppy DMA goes through the 8237, which monitors
+// virtualise, and CD emulation hands its transfers to the CD drive.
+static int
+v86_bounce_needed(struct disk_op_s *op)
+{
+    ASSERT16();
+    if (op->command != CMD_READ && op->command != CMD_WRITE)
+        return 0;
+    u8 type = GET_FLATPTR(op->drive_fl->type);
+    if (type == DTYPE_FLOPPY || type == DTYPE_CDEMU)
+        return 0;
+    return GET_GLOBAL(v86_bounce_buf_fl) && (cr0_vm86_read() & CR0_PE);
+}
+
+// The segment that reaches a flat address from 16bit mode, the high memory
+// area included.
+static u16
+flat_to_seg16(void *p_fl)
+{
+    return (u32)p_fl >= 0x100000 ? 0xffff : FLATPTR_TO_SEG(p_fl);
+}
+
+static void *
+flat_to_offset16(void *p_fl)
+{
+    return (void*)((u32)p_fl - flat_to_seg16(p_fl) * 16);
+}
+
+// Copy through the caller's paging, in 16bit mode.
+static void
+memcpy_v86(void *d_fl, void *s_fl, u32 len)
+{
+    memcpy_far(flat_to_seg16(d_fl), flat_to_offset16(d_fl)
+               , flat_to_seg16(s_fl), flat_to_offset16(s_fl), len);
+}
+
+// Execute a request from V86 mode through v86_bounce_buf_fl, in chunks.
+static int
+process_op_v86(struct disk_op_s *op)
+{
+    ASSERT16();
+    u8 *bounce_fl = GET_GLOBAL(v86_bounce_buf_fl);
+    u16 blksize = GET_FLATPTR(op->drive_fl->blksize);
+    u16 maxcount = blksize ? V86_BOUNCE_SIZE / blksize : 0;
+    if (!maxcount)
+        return process_op_16(op);
+
+    void *buf_fl = op->buf_fl;
+    u16 count = op->count;
+    u64 lba = op->lba;
+    u16 done = 0;
+    int ret = DISK_RET_SUCCESS;
+    while (done < count) {
+        u16 chunk = count - done;
+        if (chunk > maxcount)
+            chunk = maxcount;
+        void *chunk_fl = buf_fl + (u32)done * blksize;
+        if (op->command == CMD_WRITE)
+            memcpy_v86(bounce_fl, chunk_fl, (u32)chunk * blksize);
+        op->buf_fl = bounce_fl;
+        op->count = chunk;
+        op->lba = lba + done;
+        ret = process_op_16(op);
+        if (ret && op->count == chunk)
+            // As process_op() assumes, nothing was transferred.
+            op->count = 0;
+        if (op->command == CMD_READ)
+            memcpy_v86(chunk_fl, bounce_fl, (u32)op->count * blksize);
+        done += op->count;
+        if (ret)
+            break;
+    }
+    op->buf_fl = buf_fl;
+    op->count = done;
+    op->lba = lba;
+    return ret;
+}
+
 // Execute a disk_op_s request.
 int
 process_op(struct disk_op_s *op)
@@ -628,7 +721,9 @@ process_op(struct disk_op_s *op)
         op->count = 0;
         return DISK_RET_EBOUNDARY;
     }
-    if (MODESEGMENT)
+    if (MODESEGMENT && v86_bounce_needed(op))
+        ret = process_op_v86(op);
+    else if (MODESEGMENT)
         ret = process_op_16(op);
     else
         ret = process_op_32(op);
