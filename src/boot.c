@@ -347,6 +347,15 @@ int bootprio_find_scsi_mmio_device(void *mmio, int target, int lun)
     return find_prio(desc);
 }
 
+// AHCI ports are named like ATA channels, but under a CSM, the BBS table
+// gives the priorities of controllers and their drive types.
+int bootprio_find_ahci_device(struct pci_device *pci, int port, int cdrom)
+{
+    if (CONFIG_CSM)
+        return csm_bootprio_drive(pci, cdrom);
+    return bootprio_find_ata_device(pci, port, 0);
+}
+
 int bootprio_find_ata_device(struct pci_device *pci, int chanid, int slave)
 {
     if (CONFIG_CSM)
