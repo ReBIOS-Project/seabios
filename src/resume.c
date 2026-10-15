@@ -4,9 +4,11 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
+#include "biosvar.h" // GET_GLOBAL
 #include "bregs.h" // struct bregs
 #include "config.h" // CONFIG_*
 #include "farptr.h" // FLATPTR_TO_SEGOFF
+#include "fw/rebios.h" // rebios_hypercall
 #include "hw/pci.h" // pci_reboot
 #include "hw/pic.h" // pic_eoi2
 #include "hw/ps2port.h" // i8042_reboot
@@ -124,6 +126,9 @@ static void
 tryReboot(void)
 {
     dprintf(1, "Attempting a hard reboot\n");
+
+    if (CONFIG_CSM && GET_GLOBAL(ReBIOSPresent))
+        rebios_hypercall(REBIOS_HC_RESET, REBIOS_RESET_COLD);
 
     // Use a QEMU specific reboot on QEMU
     qemu_reboot();
