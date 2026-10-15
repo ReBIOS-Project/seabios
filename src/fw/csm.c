@@ -88,6 +88,9 @@ handle_csm_0000(struct bregs *regs)
     dprintf(3, "Legacy16InitializeYourself table %04x:%04x\n", regs->es,
             regs->bx);
 
+    if (ReBIOSPresent)
+        call32_hypercall_setup();
+
     csm_init_table = MAKE_FLATPTR(regs->es, regs->bx);
 
     dprintf(3, "BiosLessThan1MB %08x\n", csm_init_table->BiosLessThan1MB);
