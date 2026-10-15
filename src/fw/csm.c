@@ -16,6 +16,7 @@
 #include "memmap.h" // SYMBOL
 #include "output.h" // dprintf
 #include "paravirt.h" // qemu_preinit
+#include "rebios.h" // REBIOS_INTERFACE
 #include "stacks.h" // wait_threads
 #include "std/acpi.h" // RSDP_SIGNATURE
 #include "std/bda.h" // struct bios_data_area_s
@@ -44,6 +45,8 @@ EFI_TO_COMPATIBILITY16_INIT_TABLE *csm_init_table;
 EFI_TO_COMPATIBILITY16_BOOT_TABLE *csm_boot_table;
 
 static u16 PICMask = PIC_IRQMASK_DEFAULT;
+
+int ReBIOSPresent VARFSEG;
 static int oprom_hw_init_done;
 
 extern void __csm_return(struct bregs *regs) __noreturn;
@@ -343,6 +346,9 @@ handle_csm(struct bregs *regs)
 
     if (!CONFIG_CSM)
         return;
+
+    if (csm_compat_table.HypervisorInterface == REBIOS_INTERFACE)
+        ReBIOSPresent = 1;
 
     dprintf(3, "handle_csm regs %p AX=%04x\n", regs, regs->ax);
 

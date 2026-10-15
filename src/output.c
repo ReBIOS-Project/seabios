@@ -10,6 +10,7 @@
 #include "bregs.h" // struct bregs
 #include "config.h" // CONFIG_*
 #include "biosvar.h" // GET_GLOBAL
+#include "fw/rebios.h" // rebios_hypercall
 #include "hw/pci.h" // pci_bdf_to_bus
 #include "hw/pcidevice.h" // pci_device
 #include "hw/serialio.h" // serial_debug_putc
@@ -41,6 +42,10 @@ debug_putc(struct putcinfo *action, char c)
 {
     if (! CONFIG_DEBUG_LEVEL)
         return;
+    if (CONFIG_CSM && GET_GLOBAL(ReBIOSPresent)) {
+        rebios_hypercall(REBIOS_HC_DEBUG_PUTC, (u8)c);
+        return;
+    }
     qemu_debug_putc(c);
     if (!MODESEGMENT)
         coreboot_debug_putc(c);

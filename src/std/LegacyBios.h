@@ -248,6 +248,13 @@ typedef struct {
   /// Size of persistent allocation in high (>1MiB) memory
   ///
   UINT32                            HiPermanentMemorySize;
+
+  ///
+  /// Extension, not part of the EFI CSM specification. Set by a hypervisor
+  /// that runs this CSM16 and takes hypercalls from it, to the value that
+  /// identifies its interface.
+  ///
+  UINT32                            HypervisorInterface;
 } EFI_COMPATIBILITY16_TABLE;
 
 ///
