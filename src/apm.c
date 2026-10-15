@@ -9,6 +9,7 @@
 #include "biosvar.h" // GET_GLOBAL
 #include "bregs.h" // struct bregs
 #include "config.h" // CONFIG_*
+#include "fw/rebios.h" // rebios_hypercall
 #include "output.h" // dprintf
 #include "stacks.h" // yield_toirq
 #include "util.h" // apm_shutdown
@@ -89,6 +90,9 @@ handle_155306(struct bregs *regs)
 void
 apm_shutdown(void)
 {
+    if (CONFIG_CSM && GET_GLOBAL(ReBIOSPresent))
+        rebios_hypercall(REBIOS_HC_RESET, REBIOS_RESET_SHUTDOWN);
+
     u16 pm1a_cnt = GET_GLOBAL(acpi_pm1a_cnt);
     if (pm1a_cnt)
         outw(0x2000, pm1a_cnt);
