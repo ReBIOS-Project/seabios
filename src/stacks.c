@@ -7,6 +7,7 @@
 #include "biosvar.h" // GET_GLOBAL
 #include "bregs.h" // CR0_PE
 #include "fw/paravirt.h" // PORT_SMI_CMD
+#include "fw/rebios.h" // REBIOS_HC_CALL32_ENTER
 #include "hw/rtc.h" // rtc_use
 #include "list.h" // hlist_node
 #include "malloc.h" // free
@@ -34,14 +35,16 @@ struct {
 
 #define C16_BIG 1
 #define C16_SMM 2
+#define C16_HYPERCALL 3
 
 int HaveSmmCall32 VARFSEG;
+int HaveHypercallCall32 VARFSEG;
 
 // Backup state in preparation for call32
 static int
 call32_prep(u8 method)
 {
-    if (!CONFIG_CALL32_SMM || method != C16_SMM) {
+    if (method == C16_BIG) {
         // Backup cr0
         u32 cr0 = cr0_read();
         if (cr0 & CR0_PE)
@@ -84,7 +87,7 @@ call32_post(void)
     SET_LOW(Call16Data.method, 0);
     SET_LOW(Call16Data.ss, 0);
 
-    if (!CONFIG_CALL32_SMM || method != C16_SMM) {
+    if (method == C16_BIG) {
         // Restore a20
         u8 a20 = GET_LOW(Call16Data.a20);
         if (!a20)
@@ -234,6 +237,99 @@ call16_smm(u32 eax, u32 edx, void *func)
     return eax;
 }
 
+// The ReBIOS hypervisor keeps the processor state it gets here, in 32bit
+// flat mode, and switches to it on REBIOS_HC_CALL32_ENTER and back to the
+// state of the last such call on REBIOS_HC_CALL32_RETURN, as the SMM
+// trampoline does with its backups.
+void
+call32_hypercall_setup(void)
+{
+    ASSERT32FLAT();
+    rebios_hypercall(REBIOS_HC_CALL32_INIT, 0);
+    HaveHypercallCall32 = 1;
+}
+
+// Call a SeaBIOS C function in 32bit mode using the ReBIOS hypervisor
+static u32
+call32_hypercall(void *func, u32 eax)
+{
+    ASSERT16();
+    dprintf(9, "call32_hypercall %p %x\n", func, eax);
+    call32_prep(C16_HYPERCALL);
+    u32 bkup_esp;
+    asm volatile(
+        // Backup esp / set esp to flat stack location
+        "  movl %%esp, %0\n"
+        "  movl %%ss, %%eax\n"
+        "  shll $4, %%eax\n"
+        "  addl %%eax, %%esp\n"
+
+        // Transition to 32bit mode, call func, return to 16bit
+        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "
+        __stringify(REBIOS_HC_CALL32_ENTER) "), %%eax\n"
+        "  movl $(" __stringify(BUILD_BIOS_ADDR) " + 1f), %%ebx\n"
+        "  vmcall\n"
+
+        ASM16_SWITCH32
+        "1:movl %1, %%eax\n"
+        "  calll *%2\n"
+        "  movl %%eax, %1\n"
+
+        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "
+        __stringify(REBIOS_HC_CALL32_RETURN) "), %%eax\n"
+        "  movl $2f, %%ebx\n"
+        "  vmcall\n"
+
+        // Restore esp
+        ASM16_BACK16
+        "2:movl %0, %%esp\n"
+        : "=&r" (bkup_esp), "+r" (eax)
+        : "r" (func)
+        : "eax", "ecx", "edx", "ebx", "cc", "memory");
+    call32_post();
+
+    dprintf(9, "call32_hypercall done %p %x\n", func, eax);
+    return eax;
+}
+
+// Call a SeaBIOS C function in 16bit mode using the ReBIOS hypervisor
+static u32
+call16_hypercall(u32 eax, u32 edx, void *func)
+{
+    ASSERT32FLAT();
+    func -= BUILD_BIOS_ADDR;
+    dprintf(9, "call16_hypercall %p %x %x\n", func, eax, edx);
+    u32 stackoffset = Call16Data.ss << 4;
+    asm volatile(
+        // Restore esp
+        "  subl %0, %%esp\n"
+
+        // Transition to 16bit mode, call func, return to 32bit
+        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "
+        __stringify(REBIOS_HC_CALL32_RETURN) "), %%eax\n"
+        "  movl $(1f - " __stringify(BUILD_BIOS_ADDR) "), %%ebx\n"
+        "  vmcall\n"
+
+        ASM32_SWITCH16
+        "1:movl %1, %%eax\n"
+        "  movl %3, %%ecx\n"
+        "  calll _cfunc16_call16_helper\n"
+        "  movl %%eax, %1\n"
+
+        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "
+        __stringify(REBIOS_HC_CALL32_ENTER) "), %%eax\n"
+        "  movl $2f, %%ebx\n"
+        "  vmcall\n"
+
+        // Set esp to flat stack location
+        ASM32_BACK32
+        "2:addl %0, %%esp\n"
+        : "+r" (stackoffset), "+r" (eax), "+d" (edx)
+        : "r" (func)
+        : "eax", "ecx", "ebx", "cc", "memory");
+    return eax;
+}
+
 // Call a 32bit SeaBIOS function from a 16bit SeaBIOS function.
 u32 VISIBLE16
 __call32(void *func, u32 eax, u32 errret)
@@ -241,6 +337,10 @@ __call32(void *func, u32 eax, u32 errret)
     ASSERT16();
     if (CONFIG_CALL32_SMM && GET_GLOBAL(HaveSmmCall32))
         return call32_smm(func, eax);
+    // The processor cannot switch to 32bit mode from V86 mode (or 16bit
+    // protected mode); the hypervisor can.
+    if (CONFIG_CSM && GET_GLOBAL(HaveHypercallCall32) && (cr0_vm86_read() & CR0_PE))
+        return call32_hypercall(func, eax);
     // Jump direclty to 32bit mode - this clobbers the 16bit segment
     // selector registers.
     int ret = call32_prep(C16_BIG);
@@ -284,6 +384,8 @@ call16(u32 eax, u32 edx, void *func)
         panic("call16 with invalid stack\n");
     if (CONFIG_CALL32_SMM && Call16Data.method == C16_SMM)
         return call16_smm(eax, edx, func);
+    if (CONFIG_CSM && Call16Data.method == C16_HYPERCALL)
+        return call16_hypercall(eax, edx, func);
 
     extern void transition16big(void);
     extern void transition16(void);
