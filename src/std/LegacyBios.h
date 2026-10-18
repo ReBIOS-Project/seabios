@@ -268,6 +268,14 @@ typedef struct {
   /// identifies its interface.
   ///
   UINT32                            HypervisorInterface;
+
+  ///
+  /// Extension, not part of the EFI CSM specification. 32-bit physical
+  /// address of a NUL-terminated list of boot devices, in the format of the
+  /// "bootorder" file, that orders them in place of the BBS table's
+  /// priorities. Zero if the loader does not provide a list.
+  ///
+  UINT32                            BootOrderPointer;
 } EFI_COMPATIBILITY16_TABLE;
 
 ///
