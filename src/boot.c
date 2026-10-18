@@ -306,7 +306,7 @@ u8 is_bootprio_strict(void)
 
 int bootprio_find_pci_device(struct pci_device *pci)
 {
-    if (CONFIG_CSM)
+    if (CONFIG_CSM && !BootorderCount)
         return csm_bootprio_pci(pci);
     if (!CONFIG_BOOTORDER)
         return -1;
@@ -347,18 +347,19 @@ int bootprio_find_scsi_mmio_device(void *mmio, int target, int lun)
     return find_prio(desc);
 }
 
-// AHCI ports are named like ATA channels, but under a CSM, the BBS table
-// gives the priorities of controllers and their drive types.
+// AHCI ports are named like ATA channels, but under a CSM without a boot
+// order list, the BBS table gives the priorities of controllers and their
+// drive types.
 int bootprio_find_ahci_device(struct pci_device *pci, int port, int cdrom)
 {
-    if (CONFIG_CSM)
+    if (CONFIG_CSM && !BootorderCount)
         return csm_bootprio_drive(pci, cdrom);
     return bootprio_find_ata_device(pci, port, 0);
 }
 
 int bootprio_find_ata_device(struct pci_device *pci, int chanid, int slave)
 {
-    if (CONFIG_CSM)
+    if (CONFIG_CSM && !BootorderCount)
         return csm_bootprio_ata(pci, chanid, slave);
     if (!CONFIG_BOOTORDER)
         return -1;
@@ -372,7 +373,7 @@ int bootprio_find_ata_device(struct pci_device *pci, int chanid, int slave)
 
 int bootprio_find_fdc_device(struct pci_device *pci, int port, int fdid)
 {
-    if (CONFIG_CSM)
+    if (CONFIG_CSM && !BootorderCount)
         return csm_bootprio_fdc(pci, port, fdid);
     if (!CONFIG_BOOTORDER)
         return -1;
