@@ -515,6 +515,10 @@ nvme_prpl_xfer(struct nvme_namespace *ns, u64 lba, void *buf, u16 count,
         count = ns->max_req_size;
 
     size = count * ns->block_size;
+    /* PRP entries have to be dword aligned */
+    if (base & 0x3)
+        goto bounce;
+
     /* Special case for transfers that fit into PRP1, but are unaligned */
     if (((size + (base & ~NVME_PAGE_MASK)) <= NVME_PAGE_SIZE))
         goto single;
