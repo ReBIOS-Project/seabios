@@ -17,11 +17,13 @@
 #include "output.h" // dprintf
 #include "paravirt.h" // qemu_preinit
 #include "rebios.h" // REBIOS_INTERFACE
+#include "romfile.h" // const_romfile_add
 #include "stacks.h" // wait_threads
 #include "std/acpi.h" // RSDP_SIGNATURE
 #include "std/bda.h" // struct bios_data_area_s
 #include "std/optionrom.h" // struct rom_header
 #include "std/pnpbios.h" // PNP_SIGNATURE
+#include "string.h" // strlen
 #include "util.h" // copy_smbios_21
 
 #define UINT8 u8
@@ -63,6 +65,17 @@ csm_return(struct bregs *regs)
 
     PICMask = pic_irqmask_read();
     __csm_return(regs);
+}
+
+// Publish the loader's boot order list, if it provides one, as the
+// bootorder file.
+void
+csm_romfile_init(void)
+{
+    if (!CONFIG_CSM || !csm_compat_table.BootOrderPointer)
+        return;
+    char *list = (void *)csm_compat_table.BootOrderPointer;
+    const_romfile_add("bootorder", list, strlen(list));
 }
 
 static void

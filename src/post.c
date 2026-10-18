@@ -108,6 +108,7 @@ interface_init(void)
     qemu_cfg_init();
     coreboot_cbfs_init();
     multiboot_init();
+    csm_romfile_init();
 
     // Setup ivt/bda/ebda
     ivt_init();

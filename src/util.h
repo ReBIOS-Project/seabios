@@ -120,6 +120,7 @@ void *find_cb_subtable(struct cb_header *cbh, u32 tag);
 struct cb_header *find_cb_table(void);
 
 // fw/csm.c
+void csm_romfile_init(void);
 int csm_bootprio_fdc(struct pci_device *pci, int port, int fdid);
 int csm_bootprio_ata(struct pci_device *pci, int chanid, int slave);
 int csm_bootprio_drive(struct pci_device *pci, int cdrom);
