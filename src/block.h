@@ -85,6 +85,7 @@ struct drive_s {
 #define DTYPE_MPT_SCSI     0x84
 #define DTYPE_SDCARD       0x90
 #define DTYPE_NVME         0x91
+#define DTYPE_REBIOS_USB   0x92
 
 #define MAXDESCSIZE 80
 
