@@ -429,6 +429,24 @@ build_usb_path(char *buf, int max, struct usbhub_s *hub)
     return p;
 }
 
+int bootprio_find_rebios_usb(u16 bdf, const char *path)
+{
+    if (!CONFIG_BOOTORDER)
+        return -1;
+    // Find the controller, and the hypervisor gives the rest - for example:
+    //   /pci@i0cf8/usb@1,2/storage@1/*@0/*@0,0
+    struct pci_device *pci;
+    foreachpci(pci) {
+        if (pci->bdf != bdf)
+            continue;
+        char desc[256], *p;
+        p = build_pci_path(desc, sizeof(desc), "usb", pci);
+        snprintf(p, desc+sizeof(desc)-p, "%s", path);
+        return find_prio(desc);
+    }
+    return -1;
+}
+
 int bootprio_find_usb(struct usbdevice_s *usbdev, int lun)
 {
     if (!CONFIG_BOOTORDER)

@@ -21,6 +21,7 @@
 #include "hw/virtio-blk.h" // process_virtio_blk_op
 #include "hw/virtio-scsi.h" // virtio_scsi_process_op
 #include "hw/nvme.h" // nvme_process_op
+#include "hw/rebios-usb.h" // rebios_usb_process_op
 #include "malloc.h" // malloc_low
 #include "output.h" // dprintf
 #include "stacks.h" // call32
@@ -533,6 +534,7 @@ block_setup(void)
     pvscsi_setup();
     mpt_scsi_setup();
     nvme_setup();
+    rebios_usb_setup();
 }
 
 // Fallback handler for command requests not implemented by drivers
@@ -604,6 +606,8 @@ process_op_32(struct disk_op_s *op)
         return pvscsi_process_op(op);
     case DTYPE_NVME:
         return nvme_process_op(op);
+    case DTYPE_REBIOS_USB:
+        return rebios_usb_process_op(op);
     default:
         return process_op_both(op);
     }

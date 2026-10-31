@@ -40,6 +40,7 @@ int bootprio_find_pci_rom(struct pci_device *pci, int instance);
 int bootprio_find_named_rom(const char *name, int instance);
 struct usbdevice_s;
 int bootprio_find_usb(struct usbdevice_s *usbdev, int lun);
+int bootprio_find_rebios_usb(u16 bdf, const char *path);
 int get_keystroke_full(int msec);
 int get_keystroke(int msec);
 struct chs_s;

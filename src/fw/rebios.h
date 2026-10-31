@@ -21,11 +21,50 @@
 #define REBIOS_HC_CALL32_INIT 0x0003
 #define REBIOS_HC_CALL32_ENTER 0x0004
 #define REBIOS_HC_CALL32_RETURN 0x0005
+#define REBIOS_HC_USB_DISK 0x0006
 
 // REBIOS_HC_RESET's EBX.
 #define REBIOS_RESET_COLD 0
 #define REBIOS_RESET_WARM 1
 #define REBIOS_RESET_SHUTDOWN 2
+
+// REBIOS_HC_USB_DISK's EBX is the physical address of one of these.
+struct rebios_usb_disk {
+    u32 function;
+    u32 disk;
+    u64 lba;
+    u32 count;
+    u32 buffer;
+    u32 status;
+    u32 reserved;
+};
+
+#define REBIOS_USB_DISK_READY 0
+#define REBIOS_USB_DISK_INFO 1
+#define REBIOS_USB_DISK_READ 2
+#define REBIOS_USB_DISK_WRITE 3
+#define REBIOS_USB_DISK_POLL 4
+
+#define REBIOS_USB_DISK_STATUS_OK 0
+#define REBIOS_USB_DISK_STATUS_PENDING 1
+#define REBIOS_USB_DISK_STATUS_NO_MEDIUM 2
+#define REBIOS_USB_DISK_STATUS_WRITE_PROTECTED 3
+#define REBIOS_USB_DISK_STATUS_FAILED 4
+#define REBIOS_USB_DISK_STATUS_NO_DISK 5
+
+#define REBIOS_USB_DISK_CD (1 << 0)
+#define REBIOS_USB_DISK_REMOVABLE (1 << 1)
+
+// REBIOS_USB_DISK_INFO's buffer.
+struct rebios_usb_disk_info {
+    u64 blocks;
+    u32 block_size;
+    u32 flags;
+    // The controller, and the device's bootorder path below it.
+    u32 bdf;
+    char path[64];
+    char description[64];
+};
 
 extern int ReBIOSPresent;
 
