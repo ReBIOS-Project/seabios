@@ -29,10 +29,10 @@ section.
 
 The C code is compiled three times into three separate objects for
 each of the major supported [memory models](Memory_Model.md):
-**code16.o**, **code32seg.o**, and **code32flat.o**. Information on
-the sections and symbols of these three objects are extracted (using
-**objdump**) and passed in to the **scripts/layoutrom.py** python
-script. This script analyzes this information and produces gnu
+**code16.o**, **code32seg.o**, and **code32flat.o**. The sections,
+symbols, and relocations of these three objects are read by the
+**scripts/layoutrom.py** python script. This script analyzes this
+information and produces gnu
 [ld](http://en.wikipedia.org/wiki/GNU_linker) "linker scripts" which
 provide precise location information to the linker. These linker
 scripts are then used during the link phase which produces a **rom.o**
