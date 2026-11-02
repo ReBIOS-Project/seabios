@@ -131,7 +131,7 @@ endef
 
 $(OUT)%.s: %.c
 	@echo "  Compiling to assembler $@"
-	$(Q)$(CC) $(CFLAGS16) -S -c $< -o $@
+	$(Q)$(CC) $(CFLAGS16) -S $< -o $@
 
 $(OUT)%.o: %.c $(OUT)autoconf.h
 	@echo "  Compile checking $@"
