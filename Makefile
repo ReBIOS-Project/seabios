@@ -166,6 +166,7 @@ $(OUT)romlayout16.lds: $(OUT)ccode32flat.o $(OUT)code32seg.o $(OUT)ccode16.o $(O
 	$(Q)$(CC) $(CFLAGS32FLAT) -c src/version.c -o $(OUT)version.o
 	$(Q)$(LD) $(LD32BIT_FLAG) -r $(OUT)ccode32flat.o $(OUT)version.o -o $(OUT)code32flat.o
 	$(Q)$(LD) $(LD32BIT_FLAG) -r $(OUT)ccode16.o $(OUT)romlayout.o -o $(OUT)code16.o
+	$(Q)$(PYTHON) ./scripts/ldnomerge.py $(OUT)code32flat.o $(OUT)code32seg.o $(OUT)code16.o
 	$(Q)$(PYTHON) ./scripts/layoutrom.py $(OUT)code16.o $(OUT)code32seg.o $(OUT)code32flat.o $(OUT)$(KCONFIG_AUTOHEADER) $(OUT)romlayout16.lds $(OUT)romlayout32seg.lds $(OUT)romlayout32flat.lds
 
 # These are actually built by scripts/layoutrom.py above, but by pulling them
