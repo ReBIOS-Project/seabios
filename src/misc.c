@@ -11,6 +11,7 @@
 #include "output.h" // debug_enter
 #include "stacks.h" // call16_int
 #include "string.h" // memset
+#include "util.h" // BIOS_CONFIG_TABLE
 
 #define PORT_MATH_CLEAR        0x00f0
 
