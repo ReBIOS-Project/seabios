@@ -51,7 +51,7 @@ fi
 
 # Test for "-fwhole-program".  Older versions of gcc (pre v4.1) don't
 # support the whole-program optimization - detect that.
-$CC -fwhole-program -S -o /dev/null -xc /dev/null > /dev/null 2>&1
+$CC -Werror -fwhole-program -S -o /dev/null -xc /dev/null > /dev/null 2>&1
 if [ $? -ne 0 ]; then
     echo "  Working around no -fwhole-program" >&2
     echo 2

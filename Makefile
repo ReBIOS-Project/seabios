@@ -57,10 +57,12 @@ CPPFLAGS = -P -MD -MT $@
 COMMONCFLAGS := -I$(OUT) -Isrc -Os -MD -g -std=gnu11 \
     -Wall -Wno-strict-aliasing -Wold-style-definition \
     $(call cc-option,$(CC),-Wtype-limits,) \
-    -m32 -march=i386 -mregparm=3 -mpreferred-stack-boundary=2 \
-    -minline-all-stringops -fomit-frame-pointer \
+    -m32 -march=i386 -mregparm=3 \
+    $(call cc-option,$(CC),-mstack-alignment=4 -fno-strict-aliasing,-mpreferred-stack-boundary=2) \
+    $(call cc-option,$(CC),-minline-all-stringops,) -fomit-frame-pointer \
     -freg-struct-return -ffreestanding -fno-delete-null-pointer-checks \
-    -ffunction-sections -fdata-sections -fno-common -fno-merge-constants
+    -ffunction-sections -fdata-sections -fno-common \
+    $(call cc-option,$(CC),-fno-merge-constants,)
 COMMONCFLAGS += $(call cc-option,$(CC),-nopie,)
 COMMONCFLAGS += $(call cc-option,$(CC),-fno-pie,)
 COMMONCFLAGS += $(call cc-option,$(CC),-fno-stack-protector,)
@@ -69,10 +71,12 @@ COMMONCFLAGS += $(call cc-option,$(CC),-fstack-check=no,)
 COMMONCFLAGS += $(call cc-option,$(CC),-Wno-address-of-packed-member,)
 COMMONCFLAGS += $(call cc-option,$(CC),-Wno-array-bounds,)
 COMMONCFLAGS += $(call cc-option,$(CC),-fcf-protection=none,)
+COMMONCFLAGS += $(call cc-option,$(CC),-Wno-gnu-variable-sized-type-not-at-end,)
 COMMA := ,
 
 CFLAGS32FLAT := $(COMMONCFLAGS) -DMODE16=0 -DMODESEGMENT=0
-CFLAGSSEG := $(COMMONCFLAGS) -DMODESEGMENT=1 -fno-defer-pop \
+CFLAGSSEG := $(COMMONCFLAGS) -DMODESEGMENT=1 \
+    $(call cc-option,$(CC),-fno-defer-pop,) \
     $(call cc-option,$(CC),-fno-jump-tables,-DMANUAL_NO_JUMP_TABLE) \
     $(call cc-option,$(CC),-fno-tree-switch-conversion,)
 CFLAGS32SEG := $(CFLAGSSEG) -DMODE16=0
