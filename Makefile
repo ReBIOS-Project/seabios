@@ -148,7 +148,7 @@ $(OUT)%.lds: %.lds.S
 
 ################ Main BIOS build rules
 
-$(OUT)asm-offsets.s: $(OUT)autoconf.h
+$(OUT)src/asm-offsets.s: $(OUT)autoconf.h
 
 $(OUT)asm-offsets.h: $(OUT)src/asm-offsets.s
 	@echo "  Generating offset file $@"
