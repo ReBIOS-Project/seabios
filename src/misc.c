@@ -190,7 +190,7 @@ struct descloc_s rombios32_gdt_48 VARFSEG = {
  ****************************************************************/
 
 // BIOS build date
-char BiosDate[] VARFSEGFIXED(0xfff5) = "06/23/99";
+char BiosDate[] VARFSEGFIXED(0xfff5) = CONFIG_BIOS_DATE;
 
 u8 BiosModelId VARFSEGFIXED(0xfffe) = BUILD_MODEL_ID;
 
