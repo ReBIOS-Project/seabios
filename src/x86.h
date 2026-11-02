@@ -35,7 +35,7 @@ static inline void irq_enable(void)
 static inline u32 save_flags(void)
 {
     u32 flags;
-    asm volatile("pushfl ; popl %0" : "=rm" (flags));
+    asm volatile("pushfl ; popl %0" : ASM_OUTPUT_RM (flags));
     return flags;
 }
 
@@ -116,20 +116,20 @@ static inline u32 __ffs(u32 word)
 {
     asm("bsf %1,%0"
         : "=r" (word)
-        : "rm" (word));
+        : ASM_INPUT_RM (word));
     return word;
 }
 static inline u32 __fls(u32 word)
 {
     asm("bsr %1,%0"
         : "=r" (word)
-        : "rm" (word));
+        : ASM_INPUT_RM (word));
     return word;
 }
 
 static inline u32 getesp(void) {
     u32 esp;
-    asm("movl %%esp, %0" : "=rm"(esp));
+    asm("movl %%esp, %0" : ASM_OUTPUT_RM(esp));
     return esp;
 }
 

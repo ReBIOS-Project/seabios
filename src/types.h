@@ -145,6 +145,16 @@ extern void __force_link_error__only_in_16bit(void) __noreturn;
 
 #define barrier() __asm__ __volatile__("": : :"memory")
 
+// LLVM always uses memory for an operand that may also be in a register
+// (LLVM issue 20571), which here costs a spill for each of them.
+#ifdef __clang__
+# define ASM_INPUT_RM "r"
+# define ASM_OUTPUT_RM "=r"
+#else
+# define ASM_INPUT_RM "rm"
+# define ASM_OUTPUT_RM "=rm"
+#endif
+
 #define noinline __attribute__((noinline))
 #define __always_inline inline __attribute__((always_inline))
 #define __malloc __attribute__((__malloc__))

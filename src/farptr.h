@@ -85,11 +85,11 @@ extern void __force_link_error__unknown_type(void);
 #define DECL_SEGFUNCS(SEG)                              \
 static inline void __set_seg_##SEG(u16 seg) {           \
     __asm__("movw %w1, %%" #SEG : "=m"(__segment_##SEG) \
-            : "rm"(seg));                               \
+            : ASM_INPUT_RM(seg));                       \
 }                                                       \
 static inline u16 __get_seg_##SEG(void) {               \
     u16 res;                                            \
-    __asm__("movw %%" #SEG ", %w0" : "=rm"(res)         \
+    __asm__("movw %%" #SEG ", %w0" : ASM_OUTPUT_RM(res) \
             : "m"(__segment_##SEG));                    \
     return res;                                         \
 }
