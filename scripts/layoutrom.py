@@ -322,12 +322,17 @@ def outXRefs(sections, useseg=0, exportsyms=[], forcedelta=0):
 
 # Write LD script includes for the given sections
 def outSections(sections, useseg=0):
-    out = ""
+    locs = []
     for section in sections:
         loc = section.finalloc
         if useseg:
             loc = section.finalsegloc
-        out += "%s 0x%x : { *(%s) }\n" % (section.name, loc, section.name)
+        locs.append((loc, section.name))
+    # Some linkers require the output sections to be in address order
+    locs.sort()
+    out = ""
+    for loc, name in locs:
+        out += "%s 0x%x : { *(%s) }\n" % (name, loc, name)
     return out
 
 # Write LD script includes for the given sections using relative offsets
@@ -340,7 +345,7 @@ def outRelSections(sections, startsym, useseg=0):
         loc = section.finalloc
         if useseg:
             loc = section.finalsegloc
-        out += ". = ( 0x%x - %s ) ;\n" % (loc, startsym)
+        out += ". = %s_rel + ( 0x%x - %s ) ;\n" % (startsym, loc, startsym)
         if section.name in ('.rodata.str1.1', '.rodata'):
             out += "_rodata%s = . ;\n" % (section.fileid,)
         out += "*%s.*(%s)\n" % (section.fileid, section.name)
@@ -426,6 +431,7 @@ def writeLinkerScripts(li, out16, out32seg, out32flat):
 
     code32flat_start = 0x%x ;
     .text code32flat_start : {
+        code32flat_start_rel = . ;
 %s
 %s
 %s

@@ -174,11 +174,11 @@ $(OUT)romlayout32seg.lds $(OUT)romlayout32flat.lds $(OUT)code32flat.o $(OUT)code
 
 $(OUT)rom16.o: $(OUT)code16.o $(OUT)romlayout16.lds
 	@echo "  Linking $@"
-	$(Q)$(LD) -T $(OUT)romlayout16.lds $< -o $@
+	$(Q)$(LD) -e 0 -T $(OUT)romlayout16.lds $< -o $@
 
 $(OUT)rom32seg.o: $(OUT)code32seg.o $(OUT)romlayout32seg.lds
 	@echo "  Linking $@"
-	$(Q)$(LD) -T $(OUT)romlayout32seg.lds $< -o $@
+	$(Q)$(LD) -e 0 -T $(OUT)romlayout32seg.lds $< -o $@
 
 $(OUT)rom.o: $(OUT)rom16.noexec.o $(OUT)rom32seg.noexec.o $(OUT)code32flat.o $(OUT)romlayout32flat.lds
 	@echo "  Linking $@"
