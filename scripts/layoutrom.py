@@ -6,6 +6,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 import operator
+import struct
 import sys
 
 # LD script headers/trailers
@@ -535,87 +536,90 @@ class Reloc:
 class Symbol:
     name = offset = section = None
 
-# Read in output from objdump
-def parseObjDump(file, fileid):
+# Names of the relocation types the layout code cares about
+RELOC_TYPES = {0: 'R_386_NONE', 1: 'R_386_32', 2: 'R_386_PC32',
+               20: 'R_386_16', 21: 'R_386_PC16', 22: 'R_386_8', 23: 'R_386_PC8'}
+
+SHT_SYMTAB = 2
+SHT_STRTAB = 3
+SHT_REL = 9
+STT_SECTION = 3
+SHN_LORESERVE = 0xff00
+
+def elfName(data, table, offset):
+    start = table[4] + offset
+    return data[start:data.index(b'\0', start)].decode()
+
+# Read in the sections, symbols, and relocations of a 32bit ELF file
+def parseObjFile(filename, fileid):
+    f = open(filename, 'rb')
+    data = f.read()
+    f.close()
+    shoff = struct.unpack_from('<I', data, 32)[0]
+    shentsize, shnum, shstrndx = struct.unpack_from('<HHH', data, 46)
+    # header = (name, type, flags, addr, offset, size, link, info, align, ent)
+    headers = [struct.unpack_from('<10I', data, shoff + i * shentsize)
+               for i in range(shnum)]
+    names = [elfName(data, headers[shstrndx], h[0]) for h in headers]
+
     # sections = [section, ...]
     sections = []
-    sectionmap = {}
+    sectionindex = {}
+    for i, h in enumerate(headers):
+        if h[1] in (0, SHT_SYMTAB, SHT_STRTAB, SHT_REL):
+            continue
+        section = Section()
+        section.name = names[i]
+        section.size = h[5]
+        section.align = max(h[8], 1)
+        section.fileid = fileid
+        section.relocs = []
+        sections.append(section)
+        sectionindex[i] = section
+
     # symbols[symbolname] = symbol
     symbols = {}
-
-    state = None
-    for line in file.readlines():
-        line = line.rstrip()
-        if line == 'Sections:':
-            state = 'section'
-            continue
-        if line == 'SYMBOL TABLE:':
-            state = 'symbol'
-            continue
-        if line.startswith('RELOCATION RECORDS FOR ['):
-            sectionname = line[24:-2]
-            if sectionname.startswith('.debug_'):
-                # Skip debugging sections (to reduce parsing time)
-                state = None
+    symnames = []
+    symtabs = [h for h in headers if h[1] == SHT_SYMTAB]
+    if symtabs:
+        symtab = symtabs[0]
+        for i in range(symtab[5] // 16):
+            st_name, st_value, st_size, st_info, st_other, st_shndx = (
+                struct.unpack_from('<IIIBBH', data, symtab[4] + i * 16))
+            name = elfName(data, headers[symtab[6]], st_name)
+            if st_info & 0xf == STT_SECTION and st_shndx < SHN_LORESERVE:
+                name = names[st_shndx]
+            symnames.append(name)
+            if i == 0 or not name:
                 continue
-            state = 'reloc'
-            relocsection = sectionmap[sectionname]
-            continue
+            symbol = Symbol()
+            symbol.size = st_size
+            symbol.offset = st_value
+            symbol.name = name
+            symbol.section = sectionindex.get(st_shndx)
+            symbols[name] = symbol
 
-        if state == 'section':
-            try:
-                idx, name, size, vma, lma, fileoff, align = line.split()
-                if align[:3] != '2**':
-                    continue
-                section = Section()
-                section.name = name
-                section.size = int(size, 16)
-                section.align = 2**int(align[3:])
-                section.fileid = fileid
-                section.relocs = []
-                sections.append(section)
-                sectionmap[name] = section
-            except ValueError:
-                pass
+    for i, h in enumerate(headers):
+        if h[1] != SHT_REL or names[h[7]].startswith('.debug_'):
             continue
-        if state == 'symbol':
-            try:
-                parts = line[17:].split()
-                if len(parts) == 3:
-                    sectionname, size, name = parts
-                elif len(parts) == 4 and parts[2] == '.hidden':
-                    sectionname, size, hidden, name = parts
-                else:
-                    continue
-                symbol = Symbol()
-                symbol.size = int(size, 16)
-                symbol.offset = int(line[:8], 16)
-                symbol.name = name
-                symbol.section = sectionmap.get(sectionname)
-                symbols[name] = symbol
-            except ValueError:
-                pass
-            continue
-        if state == 'reloc':
-            try:
-                off, type, symbolname = line.split()
-                reloc = Reloc()
-                reloc.offset = int(off, 16)
-                reloc.type = type
-                reloc.symbolname = symbolname
-                reloc.symbol = symbols.get(symbolname)
-                if reloc.symbol is None:
-                    # Some binutils (2.20.1) give section name instead
-                    # of a symbol - create a dummy symbol.
-                    reloc.symbol = symbol = Symbol()
-                    symbol.size = 0
-                    symbol.offset = 0
-                    symbol.name = symbolname
-                    symbol.section = sectionmap.get(symbolname)
-                    symbols[symbolname] = symbol
-                relocsection.relocs.append(reloc)
-            except ValueError:
-                pass
+        relocsection = sectionindex[h[7]]
+        for j in range(h[5] // 8):
+            r_offset, r_info = struct.unpack_from('<II', data, h[4] + j * 8)
+            reloc = Reloc()
+            reloc.offset = r_offset
+            reloc.type = RELOC_TYPES.get(r_info & 0xff, 'R_386_%d' % (
+                r_info & 0xff,))
+            reloc.symbolname = symnames[r_info >> 8]
+            reloc.symbol = symbols.get(reloc.symbolname)
+            if reloc.symbol is None:
+                # Relocations against nothing - create a dummy symbol.
+                reloc.symbol = symbol = Symbol()
+                symbol.size = 0
+                symbol.offset = 0
+                symbol.name = reloc.symbolname
+                symbol.section = None
+                symbols[reloc.symbolname] = symbol
+            relocsection.relocs.append(reloc)
     return sections, symbols
 
 # Parser for constants in simple C header files.
@@ -638,15 +642,10 @@ def main():
     # Get output name
     in16, in32seg, in32flat, cfgfile, out16, out32seg, out32flat = sys.argv[1:]
 
-    # Read in the objdump information
-    infile16 = open(in16, 'r')
-    infile32seg = open(in32seg, 'r')
-    infile32flat = open(in32flat, 'r')
-
     # infoX = (sections, symbols)
-    info16 = parseObjDump(infile16, '16')
-    info32seg = parseObjDump(infile32seg, '32seg')
-    info32flat = parseObjDump(infile32flat, '32flat')
+    info16 = parseObjFile(in16, '16')
+    info32seg = parseObjFile(in32seg, '32seg')
+    info32flat = parseObjFile(in32flat, '32flat')
 
     # Read kconfig config file
     config = scanconfig(cfgfile)

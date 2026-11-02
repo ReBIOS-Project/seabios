@@ -20,8 +20,7 @@ def main():
     objinfo, finalsize, rawfile, outfile = sys.argv[1:]
 
     # Read in symbols
-    objinfofile = open(objinfo, 'r')
-    symbols = layoutrom.parseObjDump(objinfofile, 'in')[1]
+    symbols = layoutrom.parseObjFile(objinfo, 'in')[1]
 
     # Read in raw file
     f = open(rawfile, 'rb')
