@@ -60,7 +60,6 @@ static u32 tpm_default_to[4];
 
 static u32 crb_cmd_size;
 static void *crb_cmd;
-static u32 crb_resp_size;
 static void *crb_resp;
 
 static u32 wait_reg8(u8* reg, u32 time, u8 mask, u8 expect)
@@ -430,7 +429,6 @@ static u32 crb_init(void)
     crb_cmd = (void*)readl(CRB_REG(0, CRB_REG_CTRL_CMD_LADDR));
     crb_cmd_size = readl(CRB_REG(0, CRB_REG_CTRL_CMD_SIZE));
     crb_resp = (void*)readl(CRB_REG(0, CRB_REG_CTRL_RSP_ADDR));
-    crb_resp_size = readl(CRB_REG(0, CRB_REG_CTRL_RSP_SIZE));
 
     init_timeout(CRB_DRIVER_IDX);
 
