@@ -140,6 +140,16 @@ endchoice
             it into 128 KB (which was big enouth for a long time) you'll
             probably have to disable some featues such as xhci support.
 
+    config BIOS_DATE
+        string "BIOS date"
+        default "06/23/99"
+        help
+            The date the BIOS gives at f000:fff5, as eight characters in
+            the form mm/dd/yy.
+
+            The setup of Windows 98 Second Edition only installs ACPI by
+            itself on a BIOS dated after 12/01/99.
+
 endmenu
 
 menu "Hardware support"
