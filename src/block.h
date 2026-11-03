@@ -47,6 +47,7 @@ struct chs_s {
 
 struct drive_s {
     u8 type;            // Driver type (DTYPE_*)
+    u8 floppy_a;        // Reserve BIOS floppy drive 00h for this device.
     u8 floppy_type;     // Type of floppy (only for floppy drives).
     struct chs_s lchs;  // Logical CHS
     u64 sectors;        // Total sectors count

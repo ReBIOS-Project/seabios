@@ -589,8 +589,11 @@ ata_atapi_process_op(struct disk_op_s *op)
     if (! CONFIG_ATA)
         return 0;
 
-    if (op->command == CMD_WRITE || op->command == CMD_FORMAT)
+    if ((op->command == CMD_WRITE || op->command == CMD_FORMAT)
+        && GET_FLATPTR(op->drive_fl->blksize) == CDROM_SECTOR_SIZE)
         return DISK_RET_EWRITEPROTECT;
+    if (op->command == CMD_FORMAT)
+        return DISK_RET_EPARAM;
     u8 cdbcmd[CDROM_CDB_SIZE];
     int blocksize = scsi_fill_cmd(op, cdbcmd, sizeof(cdbcmd));
     if (blocksize < 0)
@@ -643,7 +646,7 @@ ata_atapi_process_op(struct disk_op_s *op)
             goto fail;
         }
 
-        ret = ata_pio_transfer(op, 0, blocksize);
+        ret = ata_pio_transfer(op, op->command == CMD_WRITE, blocksize);
     }
 
 fail:
@@ -743,7 +746,8 @@ init_drive_atapi(struct atadrive_s *dummy, u16 *buffer)
     u8 iscd = ((buffer[0] >> 8) & 0x1f) == 0x05;
     char model[MAXMODEL+1];
     char *desc = znprintf(MAXDESCSIZE
-                          , "DVD/CD [ata%d-%d: %s ATAPI-%d %s]"
+                          , "%s [ata%d-%d: %s ATAPI-%d %s]"
+                          , iscd ? "DVD/CD" : "ATAPI"
                           , adrive->chan_gf->ataid, adrive->slave
                           , ata_extract_model(model, MAXMODEL, buffer)
                           , ata_extract_version(buffer)
@@ -760,6 +764,14 @@ init_drive_atapi(struct atadrive_s *dummy, u16 *buffer)
                                   adrive->slave,
                                   &(adrive->drive.lchs));
         boot_add_cd(&adrive->drive, desc, prio);
+    } else if (((buffer[0] >> 8) & 0x1f) == SCSI_TYPE_DISK) {
+        int prio = bootprio_find_ata_device(adrive->chan_gf->pci_tmp,
+                                          adrive->chan_gf->chanid,
+                                          adrive->slave);
+        boot_lchs_find_ata_device(adrive->chan_gf->pci_tmp,
+                                 adrive->chan_gf->chanid,
+                                 adrive->slave, &adrive->drive.lchs);
+        atapi_drive_setup(&adrive->drive, model, prio);
     }
 
     return adrive;
