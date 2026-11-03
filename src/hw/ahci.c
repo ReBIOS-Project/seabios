@@ -303,13 +303,15 @@ ahci_atapi_issue(struct ahci_port_s *port_gf, struct disk_op_s *op,
     struct ahci_cmd_s *cmd = port_gf->cmd;
     scsi_fill_cmd(op, cmd->atapi, CDROM_CDB_SIZE);
     sata_prep_atapi(&cmd->fis, blocksize);
-    int rc = ahci_command(port_gf, 0, 1, op->buf_fl, op->count * blocksize);
+    int rc = ahci_command(port_gf, op->command == CMD_WRITE, 1
+                          , op->buf_fl, op->count * blocksize);
     // The device fails every command but a few until its unit attention,
     // such as a medium change, has been read as sense data.
     if (rc == AHCI_UNIT_ATTENTION && !ahci_atapi_request_sense(port_gf)) {
         scsi_fill_cmd(op, cmd->atapi, CDROM_CDB_SIZE);
         sata_prep_atapi(&cmd->fis, blocksize);
-        rc = ahci_command(port_gf, 0, 1, op->buf_fl, op->count * blocksize);
+        rc = ahci_command(port_gf, op->command == CMD_WRITE, 1
+                          , op->buf_fl, op->count * blocksize);
     }
     if (rc < 0)
         return DISK_RET_EBADTRACK;
@@ -325,8 +327,11 @@ int ahci_atapi_process_op(struct disk_op_s *op)
         op->drive_fl, struct ahci_port_s, drive);
     struct ahci_cmd_s *cmd = port_gf->cmd;
 
-    if (op->command == CMD_WRITE || op->command == CMD_FORMAT)
+    if ((op->command == CMD_WRITE || op->command == CMD_FORMAT)
+        && op->drive_fl->blksize == CDROM_SECTOR_SIZE)
         return DISK_RET_EWRITEPROTECT;
+    if (op->command == CMD_FORMAT)
+        return DISK_RET_EPARAM;
     int blocksize = scsi_fill_cmd(op, cmd->atapi, CDROM_CDB_SIZE);
     if (blocksize < 0)
         return default_process_op(op);
@@ -336,7 +341,8 @@ int ahci_atapi_process_op(struct disk_op_s *op)
         return ahci_atapi_issue(port_gf, op, blocksize);
 
     // CMD_SCSI carries a pre-built CDB we can't safely split.
-    if (op->command != CMD_READ || blocksize > CDROM_SECTOR_SIZE)
+    if ((op->command != CMD_READ && op->command != CMD_WRITE)
+        || blocksize > CDROM_SECTOR_SIZE)
         return DISK_RET_EBADTRACK;
 
     // Use a word aligned buffer for AHCI I/O
@@ -348,10 +354,13 @@ int ahci_atapi_process_op(struct disk_op_s *op)
 
     u16 block;
     for (block = 0; block < op->count; block++) {
+        if (op->command == CMD_WRITE)
+            memcpy_fl(alignedbuf_fl, position, blocksize);
         int rc = ahci_atapi_issue(port_gf, &localop, blocksize);
         if (rc)
             return rc;
-        memcpy_fl(position, alignedbuf_fl, blocksize);
+        if (op->command == CMD_READ)
+            memcpy_fl(position, alignedbuf_fl, blocksize);
         position += blocksize;
         localop.lba++;
     }
@@ -717,15 +726,18 @@ static int ahci_port_setup(struct ahci_port_s *port)
         port->drive.blksize = CDROM_SECTOR_SIZE;
         port->drive.sectors = (u64)-1;
         u8 iscd = ((buffer[0] >> 8) & 0x1f) == 0x05;
-        if (!iscd) {
-            dprintf(1, "AHCI/%d: atapi device isn't a cdrom\n", port->pnr);
+        if (!iscd && ((buffer[0] >> 8) & 0x1f) != SCSI_TYPE_DISK) {
+            dprintf(1, "AHCI/%d: unsupported ATAPI device type\n", port->pnr);
             return -1;
         }
+        if (!iscd)
+            port->atapi = 2; // Direct-access ATAPI device (ZIP or LS-120).
         port->desc = znprintf(MAXDESCSIZE
-                              , "DVD/CD [AHCI/%d: %s ATAPI-%d DVD/CD]"
-                              , port->pnr
+                              , "%s [AHCI/%d: %s ATAPI-%d%s]"
+                              , iscd ? "DVD/CD" : "ATAPI", port->pnr
                               , ata_extract_model(model, MAXMODEL, buffer)
-                              , ata_extract_version(buffer));
+                              , ata_extract_version(buffer)
+                              , iscd ? " DVD/CD" : "");
         port->prio = bootprio_find_ahci_device(ctrl->pci_tmp, pnr, 1);
     }
     boot_lchs_find_ata_device(ctrl->pci_tmp, pnr, 0, &(port->drive.lchs));
@@ -752,6 +764,8 @@ ahci_port_detect(void *data)
         if (!port->atapi) {
             // Register with bcv system.
             boot_add_hd(&port->drive, port->desc, port->prio);
+        } else if (port->atapi == 2) {
+            atapi_drive_setup(&port->drive, port->desc, port->prio);
         } else {
             // fill cdidmap
             boot_add_cd(&port->drive, port->desc, port->prio);

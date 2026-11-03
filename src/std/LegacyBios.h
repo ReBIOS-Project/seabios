@@ -263,6 +263,8 @@ typedef struct {
   /// priorities. Zero if the loader does not provide a list.
   ///
   UINT32                            BootOrderPointer;
+  // NUL-terminated model substring for the ATAPI floppy reserved as A:.
+  UINT32                            FloppyAPointer;
 } EFI_COMPATIBILITY16_TABLE;
 
 ///

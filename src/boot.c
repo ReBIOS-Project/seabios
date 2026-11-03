@@ -835,8 +835,13 @@ add_bev(int type, u32 vector)
 {
     if (type == IPL_TYPE_HARDDISK && HaveHDBoot++)
         return;
-    if (type == IPL_TYPE_FLOPPY && HaveFDBoot++)
-        return;
+    if (type == IPL_TYPE_FLOPPY) {
+        int i;
+        for (i = 0; i < BEVCount; i++)
+            if (BEV[i].type == type && BEV[i].vector == vector)
+                return;
+        HaveFDBoot++;
+    }
     if (BEVCount >= ARRAY_SIZE(BEV))
         return;
     struct bev_s *bev = &BEV[BEVCount++];
@@ -855,8 +860,21 @@ bcv_prepboot(void)
     if (haltprio >= 0)
         bootentry_add(IPL_TYPE_HALT, haltprio, 0, "HALT");
 
+    // Reserve a configured ATAPI floppy as A: independently of boot order.
+    struct bootentry_s *pos, *floppy_a = NULL;
+    int matches = 0;
+    hlist_for_each_entry(pos, &BootList, node) {
+        if (pos->type == IPL_TYPE_FLOPPY && pos->drive->floppy_a) {
+            floppy_a = pos;
+            matches++;
+        }
+    }
+    if (matches == 1)
+        map_floppy_drive(floppy_a->drive);
+    else if (matches > 1)
+        dprintf(1, "floppy_a matches multiple drives; using boot order\n");
+
     // Map drives and populate BEV list
-    struct bootentry_s *pos;
     hlist_for_each_entry(pos, &BootList, node) {
         switch (pos->type) {
         case IPL_TYPE_BCV:
@@ -864,8 +882,10 @@ bcv_prepboot(void)
             add_bev(IPL_TYPE_HARDDISK, 0);
             break;
         case IPL_TYPE_FLOPPY:
-            map_floppy_drive(pos->drive);
-            add_bev(IPL_TYPE_FLOPPY, 0);
+            if (matches != 1 || pos != floppy_a)
+                map_floppy_drive(pos->drive);
+            add_bev(IPL_TYPE_FLOPPY,
+                    getDriveId(EXTTYPE_FLOPPY, pos->drive));
             break;
         case IPL_TYPE_HARDDISK:
             map_hd_drive(pos->drive);
@@ -1025,7 +1045,7 @@ do_boot(int seq_nr)
     switch (ie->type) {
     case IPL_TYPE_FLOPPY:
         printf("Booting from Floppy...\n");
-        boot_disk(0x00, CheckFloppySig);
+        boot_disk(ie->vector, CheckFloppySig);
         break;
     case IPL_TYPE_HARDDISK:
         printf("Booting from Hard Disk...\n");

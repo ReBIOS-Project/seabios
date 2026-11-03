@@ -6,6 +6,7 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "block.h" // struct disk_op_s
+#include "atapi-floppy.h" // atapi_floppy_setup
 #include "blockcmd.h" // struct cdb_request_sense
 #include "byteorder.h" // be32_to_cpu
 #include "farptr.h" // GET_FLATPTR
@@ -14,6 +15,7 @@
 #include "string.h" // memset
 #include "util.h" // timer_calc
 #include "malloc.h"
+#include "romfile.h" // romfile_loadfile
 
 
 /****************************************************************
@@ -354,6 +356,20 @@ scsi_drive_setup(struct drive_s *drive, const char *s, int prio)
     if (pdt != SCSI_TYPE_DISK)
         return -1;
 
+    // Some bridges (and emulators) have a generic ATA model but preserve
+    // the drive's identity in INQUIRY.
+    int atapi_floppy = (drive->type == DTYPE_ATA_ATAPI
+                       || drive->type == DTYPE_AHCI_ATAPI)
+        && (drive->floppy_type || atapi_is_superdisk(product));
+    if (atapi_floppy) {
+        drive->floppy_type = 0x10;
+        char *wanted = romfile_loadfile("etc/floppy-a", NULL);
+        drive->floppy_a = wanted && *wanted
+            && (atapi_model_matches(s, wanted)
+                || atapi_model_matches(product, wanted));
+        free(wanted);
+    }
+
     ret = scsi_is_ready(&dop);
     if (ret) {
         dprintf(1, "scsi_is_ready returned %d\n", ret);
@@ -411,6 +427,24 @@ scsi_drive_setup(struct drive_s *drive, const char *s, int prio)
 
     char *desc = znprintf(MAXDESCSIZE, "%s Drive %s %s %s"
                           , s, vendor, product, rev);
-    boot_add_hd(drive, desc, prio);
+    if (atapi_floppy) {
+        if (atapi_floppy_setup(drive)) {
+            dprintf(1, "%s: unsupported SuperDisk capacity\n", s);
+            return -1;
+        }
+        boot_add_floppy(drive, desc, prio);
+    } else {
+        if (drive->type == DTYPE_ATA_ATAPI || drive->type == DTYPE_AHCI_ATAPI)
+            atapi_zip_setup(drive, vendor, product, s);
+        boot_add_hd(drive, desc, prio);
+    }
     return 0;
+}
+
+// IDENTIFY PACKET DEVICE's model survives bridges which change INQUIRY.
+int
+atapi_drive_setup(struct drive_s *drive, const char *model, int prio)
+{
+    drive->floppy_type = atapi_is_superdisk(model) ? 0x10 : 0;
+    return scsi_drive_setup(drive, model, prio);
 }
