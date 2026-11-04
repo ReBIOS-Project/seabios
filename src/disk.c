@@ -9,6 +9,8 @@
 #include "bregs.h" // struct bregs
 #include "config.h" // CONFIG_*
 #include "hw/ata.h" // ATA_CB_DC
+#include "hw/atapi-floppy.h" // struct atapi_media_s
+#include "hw/blockcmd.h" // atapi_media_check
 #include "hw/pic.h" // pic_eoi2
 #include "output.h" // debug_enter
 #include "stacks.h" // call16_int
@@ -81,10 +83,36 @@ getLCHS(struct drive_s *drive_fl)
         res.sector = sptcyl & 0x3f;
         return res;
     }
+    struct atapi_media_s *media_fl = GET_FLATPTR(drive_fl->media);
+    if (media_fl) {
+        // An ATAPI floppy: the geometry of the media now in the drive.
+        res.cylinder = GET_FLATPTR(media_fl->lchs.cylinder);
+        res.head = GET_FLATPTR(media_fl->lchs.head);
+        res.sector = GET_FLATPTR(media_fl->lchs.sector);
+        return res;
+    }
     res.cylinder = GET_FLATPTR(drive_fl->lchs.cylinder);
     res.head = GET_FLATPTR(drive_fl->lchs.head);
     res.sector = GET_FLATPTR(drive_fl->lchs.sector);
     return res;
+}
+
+// Check an ATAPI floppy's media (on the extra stack, like disk requests).
+static int
+__media_check(struct drive_s *drive_fl)
+{
+    return atapi_media_check(drive_fl);
+}
+
+static int
+media_check(struct drive_s *drive_fl)
+{
+    ASSERT16();
+    if (!CONFIG_DRIVES)
+        return DISK_RET_SUCCESS;
+    if (!CONFIG_ENTRY_EXTRASTACK)
+        return stack_hop(__media_check, drive_fl, 0);
+    return atapi_media_check(drive_fl);
 }
 
 // Execute a "disk_op_s" request after jumping to the extra stack.
@@ -280,12 +308,15 @@ disk_1308(struct bregs *regs, struct drive_s *drive_fl)
     nlc--;
     nlh--;
     u8 count;
+    struct atapi_media_s *media_fl = GET_FLATPTR(drive_fl->media);
     if (regs->dl < EXTSTART_HD) {
         // Floppy
         count = GET_GLOBAL(FloppyCount);
 
         if (CONFIG_CDROM_EMU && drive_fl == GET_GLOBAL(cdemu_drive_gf))
             regs->bx = GET_LOW(CDEmu.media) * 2;
+        else if (media_fl)
+            regs->bx = GET_FLATPTR(media_fl->floppy_type);
         else
             regs->bx = GET_FLATPTR(drive_fl->floppy_type);
 
@@ -655,9 +686,54 @@ disk_13(struct bregs *regs, struct drive_s *drive_fl)
     }
 }
 
+// INT 13h for an ATAPI floppy (LS-120), following the ARMD specification:
+// check the media before each access, so that media inserted after POST is
+// found, and report media changes. Returns 1 when the call is answered.
+static int
+atapi_floppy_13(struct bregs *regs, struct drive_s *drive_fl)
+{
+    struct atapi_media_s *media_fl = GET_FLATPTR(drive_fl->media);
+    int ret;
+    switch (regs->ah) {
+    case 0x02:
+    case 0x03:
+    case 0x04:
+    case 0x05:
+        ret = media_check(drive_fl);
+        if (ret) {
+            disk_ret(regs, ret);
+            return 1;
+        }
+        return 0;
+    case 0x08:
+        // Without media: the 1.44-MB geometry atapi_media_check() left.
+        media_check(drive_fl);
+        return 0;
+    case 0x15:
+        // A drive with change-line support.
+        disk_ret(regs, DISK_RET_SUCCESS);
+        regs->ah = 2;
+        return 1;
+    case 0x16:
+        ret = media_check(drive_fl);
+        if (ret || GET_FLATPTR(media_fl->changed)) {
+            SET_FLATPTR(media_fl->changed, 0);
+            disk_ret(regs, DISK_RET_ECHANGED);
+        } else {
+            disk_ret(regs, DISK_RET_SUCCESS);
+        }
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 static void
 floppy_13(struct bregs *regs, struct drive_s *drive_fl)
 {
+    if (GET_FLATPTR(drive_fl->media) && atapi_floppy_13(regs, drive_fl))
+        return;
+
     // Only limited commands are supported on floppies.
     switch (regs->ah) {
     case 0x00:
