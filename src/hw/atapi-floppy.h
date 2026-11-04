@@ -60,6 +60,47 @@ atapi_is_superdisk(const char *model)
     return atapi_is_ls_model(model) || atapi_model_matches(model, "FLOPPY");
 }
 
+static inline int
+atapi_is_zip(const char *vendor, const char *product, const char *model)
+{
+    return (atapi_model_matches(vendor, "IOMEGA")
+            && atapi_model_matches(product, "ZIP"))
+        || (atapi_model_matches(model, "IOMEGA")
+            && atapi_model_matches(model, "ZIP"));
+}
+
+// How a ZIP drive is mapped (the etc/zip-mode ROM file, as ReBIOS's
+// zip_mode setting gives it): by its media at POST, or always as a floppy
+// or a hard disk. As old BIOSes did, the mapping stays until the next boot.
+#define ATAPI_ZIP_AUTO   1 // Partitioned media: hard disk; else a floppy.
+#define ATAPI_ZIP_FLOPPY 2
+#define ATAPI_ZIP_HDD    3
+
+// Whether sector 0 holds a partition table (hard-disk media) rather than a
+// FAT boot sector (superfloppy media) or nothing.
+static inline int
+atapi_media_has_mbr(const u8 *sector)
+{
+    if (sector[510] != 0x55 || sector[511] != 0xaa)
+        return 0;
+    // A FAT boot sector: a jump, 512 bytes per sector, a power-of-two
+    // cluster size and one or two FATs.
+    u8 spc = sector[13], fats = sector[16];
+    if ((sector[0] == 0xeb || sector[0] == 0xe9)
+        && sector[11] == 0x00 && sector[12] == 0x02
+        && spc && !(spc & (spc - 1)) && (fats == 1 || fats == 2))
+        return 0;
+    int i, found = 0;
+    for (i = 0; i < 4; i++) {
+        const u8 *entry = sector + 446 + 16 * i;
+        if (entry[0] != 0x00 && entry[0] != 0x80)
+            return 0;
+        if (entry[4])
+            found = 1;
+    }
+    return found;
+}
+
 // INT 13h drive type of an ATAPI removable media device (ARMD).
 #define ATAPI_FLOPPY_TYPE_ARMD 0x10
 
@@ -124,6 +165,23 @@ atapi_floppy_page_geometry(u32 sectors, u16 heads, u16 spt, u16 cylinders,
     return 0;
 }
 
+// Geometry for other media (ZIP superfloppies, which have no Flexible Disk
+// page): the 64-head/32-sector translation of Iomega's BIOS. Media beyond
+// 1024 cylinders is not supported.
+static inline int
+atapi_floppy_large_geometry(u32 sectors, struct chs_s *chs, u8 *type)
+{
+    u32 cylinders = sectors / (64 * 32);
+    if (!cylinders || cylinders > 1024)
+        return -1;
+    chs->head = 64;
+    chs->sector = 32;
+    chs->cylinder = cylinders;
+    chs->pad = 0;
+    *type = ATAPI_FLOPPY_TYPE_ARMD;
+    return 0;
+}
+
 // The geometry INT 13h reports without media: a 1.44-MB drive of the ARMD
 // type, as the ARMD specification's AH=08h does.
 static inline void
@@ -156,10 +214,7 @@ atapi_zip_setup(struct drive_s *drive, const char *vendor,
     if (drive->blksize != DISK_SECTOR_SIZE || !drive->removable
         || (drive->lchs.head && drive->lchs.sector))
         return 0;
-    if (!((atapi_model_matches(vendor, "IOMEGA")
-           && atapi_model_matches(product, "ZIP"))
-          || (atapi_model_matches(model, "IOMEGA")
-              && atapi_model_matches(model, "ZIP"))))
+    if (!atapi_is_zip(vendor, product, model))
         return 0;
     if (drive->sectors != 196608 && drive->sectors != 489532)
         return 0;

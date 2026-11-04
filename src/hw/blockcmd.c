@@ -185,10 +185,11 @@ atapi_media_identify(struct drive_s *drive_fl, struct atapi_media_s *media_fl)
         struct atapi_mode_flexible page __aligned(4);
         memset(&page, 0, sizeof(page));
         ret = atapi_media_cdb(drive_fl, &ms, &page, sizeof(page));
-        if (ret || (page.page_code & 0x3f) != 0x05
-            || atapi_floppy_page_geometry(sectors, page.heads, page.sectors
-                                          , be16_to_cpu(page.cylinders)
-                                          , &chs, &type)) {
+        if ((ret || (page.page_code & 0x3f) != 0x05
+             || atapi_floppy_page_geometry(sectors, page.heads, page.sectors
+                                           , be16_to_cpu(page.cylinders)
+                                           , &chs, &type))
+            && atapi_floppy_large_geometry(sectors, &chs, &type)) {
             dprintf(1, "ATAPI floppy: no geometry for %u sectors\n", sectors);
             SET_FLATPTR(media_fl->state, ATAPI_MEDIA_UNSUPPORTED);
             return DISK_RET_EBADTRACK;
@@ -480,6 +481,24 @@ int scsi_sequential_scan(struct drive_s *tmp_drive, u32 maxluns,
     return ret;
 }
 
+// Whether the media's sector 0 has a partition table (a ZIP auto mode).
+static int
+atapi_zip_partitioned(struct disk_op_s *dop)
+{
+    u8 *buf = malloc_tmp(DISK_SECTOR_SIZE);
+    if (!buf) {
+        warn_noalloc();
+        return 0;
+    }
+    dop->command = CMD_READ;
+    dop->lba = 0;
+    dop->count = 1;
+    dop->buf_fl = buf;
+    int has_mbr = !process_op(dop) && atapi_media_has_mbr(buf);
+    free(buf);
+    return has_mbr;
+}
+
 // Validate drive, find block size / sector count, and register drive.
 int
 scsi_drive_setup(struct drive_s *drive, const char *s, int prio)
@@ -532,10 +551,17 @@ scsi_drive_setup(struct drive_s *drive, const char *s, int prio)
                 || atapi_model_matches(product, wanted));
         free(wanted);
     }
+    // A ZIP is a floppy or a hard disk as etc/zip-mode says; in auto mode
+    // (the default) by its media below.
+    int zip = is_atapi && !floppy_a && atapi_is_zip(vendor, product, s);
+    int zip_mode = zip ? romfile_loadint("etc/zip-mode", ATAPI_ZIP_AUTO) : 0;
+    if (zip)
+        dprintf(1, "%s: ZIP mode %d\n", s, zip_mode);
     // The drive named by floppy_a is a floppy even if its model does not
     // say so.
     int atapi_floppy = is_atapi
-        && (drive->floppy_type || atapi_is_superdisk(product) || floppy_a);
+        && (drive->floppy_type || atapi_is_superdisk(product) || floppy_a
+            || (zip && zip_mode != ATAPI_ZIP_HDD));
     if (atapi_floppy) {
         drive->floppy_type = ATAPI_FLOPPY_TYPE_ARMD;
         drive->floppy_a = floppy_a;
@@ -614,6 +640,15 @@ scsi_drive_setup(struct drive_s *drive, const char *s, int prio)
                 drive->pchs.sector = (u32)drive->sectors / (geomdata.heads * cylinders);
             }
         }
+    }
+
+    if (atapi_floppy && zip && zip_mode == ATAPI_ZIP_AUTO
+        && atapi_zip_partitioned(&dop)) {
+        dprintf(1, "%s: partitioned ZIP media, mapped as a hard disk\n", s);
+        free(drive->media);
+        drive->media = NULL;
+        drive->floppy_type = 0;
+        atapi_floppy = 0;
     }
 
     char *desc = znprintf(MAXDESCSIZE, "%s Drive %s %s %s"

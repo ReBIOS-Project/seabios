@@ -265,6 +265,8 @@ typedef struct {
   UINT32                            BootOrderPointer;
   // NUL-terminated model substring for the ATAPI floppy reserved as A:.
   UINT32                            FloppyAPointer;
+  // How an ATAPI ZIP drive is mapped: 0 unset, 1 auto, 2 floppy, 3 hard disk.
+  UINT32                            ZipMode;
 } EFI_COMPATIBILITY16_TABLE;
 
 ///

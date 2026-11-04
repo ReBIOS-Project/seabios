@@ -37,6 +37,38 @@ int main(void)
     CHECK(atapi_floppy_page_geometry(469505, 32, 56, 262, &chs, &type));
     CHECK(atapi_floppy_page_geometry(64 * 2 * 1100, 2, 64, 1100, &chs, &type));
     CHECK(atapi_floppy_page_geometry(0, 0, 0, 0, &chs, &type));
+    CHECK(!atapi_floppy_large_geometry(196608, &chs, &type)); // ZIP 100
+    CHECK(chs.cylinder == 96 && chs.head == 64 && chs.sector == 32);
+    CHECK(!atapi_floppy_large_geometry(489532, &chs, &type)); // ZIP 250
+    CHECK(chs.cylinder == 239 && type == ATAPI_FLOPPY_TYPE_ARMD);
+    CHECK(atapi_floppy_large_geometry(2047, &chs, &type));
+    CHECK(atapi_floppy_large_geometry(1025 * 2048, &chs, &type));
+
+    CHECK(atapi_is_zip("IOMEGA", "ZIP 100", "bridge"));
+    CHECK(atapi_is_zip("ATA", "disk", "IOMEGA ZIP 250 ATAPI"));
+    CHECK(!atapi_is_zip("MATSHITA", "LS-120 COSM 04", "LS-120"));
+
+    static u8 sector[512];
+    CHECK(!atapi_media_has_mbr(sector));
+    sector[510] = 0x55;
+    sector[511] = 0xaa;
+    CHECK(!atapi_media_has_mbr(sector)); // No partition.
+    sector[446 + 3 * 16 + 4] = 0x06;     // Iomega's partition 4, FAT16.
+    CHECK(atapi_media_has_mbr(sector));
+    sector[446] = 0x12;                  // Not a status byte.
+    CHECK(!atapi_media_has_mbr(sector));
+    sector[446] = 0x80;
+    CHECK(atapi_media_has_mbr(sector));
+    // A FAT boot sector (superfloppy) whose BPB bytes look like entries.
+    sector[0] = 0xeb;
+    sector[11] = 0x00;
+    sector[12] = 0x02;
+    sector[13] = 32;
+    sector[16] = 2;
+    CHECK(!atapi_media_has_mbr(sector));
+    sector[13] = 3;                      // Not a cluster size: an MBR.
+    CHECK(atapi_media_has_mbr(sector));
+
     struct atapi_media_s media = { .state = ATAPI_MEDIA_READY };
     atapi_media_none(&media);
     CHECK(media.state == ATAPI_MEDIA_NONE && media.sectors == 0);
