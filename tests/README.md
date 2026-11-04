@@ -24,6 +24,17 @@ Build the ReBIOS CSM configuration with GCC, GNU binutils, make and Python 3:
 Real hardware validation is still required for IDE-to-SATA ATAPI bridges
 and the AHCI controller path. Low-level formatting is rejected.
 
+`etc/floppy-a` and `etc/floppy-b` (ReBIOS's `floppy_a`, `floppy_b`) reserve
+BIOS floppy drives 00h and 01h, A: and B:. They name a drive by part of its
+model, or by its port: its SeaBIOS name (`ata1-0`, `AHCI/2`) or its boot
+order path (`/pci@i0cf8/*@17/drive@2/disk@0`), which tells two drives of one
+model apart. Of several drives a model name matches, the first in boot
+order is taken; the same name for both gives A: to the first and B: to the
+second. A named drive is a floppy drive, a ZIP too. In 86Box, two LS-120s
+named by port (reversed from their channel order) became A: and B: as
+named, and `DISKCOPY A: B:` and `DISKCOMP A: B:` passed; two ZIPs named by
+port became A: and B:.
+
 A ZIP is mapped as the `etc/zip-mode` ROM file says (ReBIOS's `zip_mode`):
 in auto mode (the default) by its media at POST, a hard disk when sector 0
 has a partition table (in any of its four entries), else a floppy, also
