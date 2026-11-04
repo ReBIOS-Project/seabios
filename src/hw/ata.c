@@ -771,6 +771,12 @@ init_drive_atapi(struct atadrive_s *dummy, u16 *buffer)
         boot_lchs_find_ata_device(adrive->chan_gf->pci_tmp,
                                  adrive->chan_gf->chanid,
                                  adrive->slave, &adrive->drive.lchs);
+        char name[16];
+        snprintf(name, sizeof(name), "ata%d-%d"
+                 , adrive->chan_gf->ataid, adrive->slave);
+        adrive->drive.floppy_slot = floppy_slot_port(
+            adrive->chan_gf->pci_tmp, adrive->chan_gf->chanid, adrive->slave
+            , name);
         atapi_drive_setup(&adrive->drive, model, prio);
     }
 

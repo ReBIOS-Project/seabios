@@ -543,28 +543,40 @@ scsi_drive_setup(struct drive_s *drive, const char *s, int prio)
     // the drive's identity in INQUIRY.
     int is_atapi = drive->type == DTYPE_ATA_ATAPI
         || drive->type == DTYPE_AHCI_ATAPI;
-    int floppy_a = 0;
+    // Named by its port (floppy_slot_port), or else by its model.
+    int floppy_slot = is_atapi ? drive->floppy_slot : 0;
     if (is_atapi) {
-        char *wanted = romfile_loadfile("etc/floppy-a", NULL);
-        floppy_a = wanted && *wanted
-            && (atapi_model_matches(s, wanted)
-                || atapi_model_matches(product, wanted));
-        free(wanted);
+        static const char *const files[] = { "etc/floppy-a", "etc/floppy-b" };
+        int i;
+        for (i = 0; i < ARRAY_SIZE(files); i++) {
+            char *wanted = romfile_loadfile(files[i], NULL);
+            // Port names are matched by floppy_slot_port alone.
+            int port = wanted && (wanted[0] == '/'
+                                  || atapi_model_matches(wanted, "AHCI/")
+                                  || (atapi_model_upper(wanted[0]) == 'A'
+                                      && atapi_model_upper(wanted[1]) == 'T'
+                                      && atapi_model_upper(wanted[2]) == 'A'
+                                      && wanted[3] >= '0' && wanted[3] <= '9'));
+            if (wanted && *wanted && !port && (atapi_model_matches(s, wanted)
+                                      || atapi_model_matches(product, wanted)))
+                floppy_slot |= 1 << i;
+            free(wanted);
+        }
     }
     // A ZIP is a floppy or a hard disk as etc/zip-mode says; in auto mode
     // (the default) by its media below.
-    int zip = is_atapi && !floppy_a && atapi_is_zip(vendor, product, s);
+    int zip = is_atapi && !floppy_slot && atapi_is_zip(vendor, product, s);
     int zip_mode = zip ? romfile_loadint("etc/zip-mode", ATAPI_ZIP_AUTO) : 0;
     if (zip)
         dprintf(1, "%s: ZIP mode %d\n", s, zip_mode);
-    // The drive named by floppy_a is a floppy even if its model does not
-    // say so.
+    // A drive named by floppy_a or floppy_b is a floppy even if its model
+    // does not say so.
     int atapi_floppy = is_atapi
-        && (drive->floppy_type || atapi_is_superdisk(product) || floppy_a
+        && (drive->floppy_type || atapi_is_superdisk(product) || floppy_slot
             || (zip && zip_mode != ATAPI_ZIP_HDD));
     if (atapi_floppy) {
         drive->floppy_type = ATAPI_FLOPPY_TYPE_ARMD;
-        drive->floppy_a = floppy_a;
+        drive->floppy_slot = floppy_slot;
         drive->media = malloc_low(sizeof(*drive->media));
         if (!drive->media) {
             warn_noalloc();

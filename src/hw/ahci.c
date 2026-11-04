@@ -733,6 +733,10 @@ ahci_port_detect(void *data)
             // Register with bcv system.
             boot_add_hd(&port->drive, port->desc, port->prio);
         } else if (port->atapi == 2) {
+            char name[16];
+            snprintf(name, sizeof(name), "AHCI/%d", port->pnr);
+            port->drive.floppy_slot = floppy_slot_port(
+                port->ctrl->pci_tmp, port->pnr, 0, name);
             atapi_drive_setup(&port->drive, port->desc, port->prio);
         } else {
             // fill cdidmap
