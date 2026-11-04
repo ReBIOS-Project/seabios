@@ -72,10 +72,23 @@ csm_return(struct bregs *regs)
 void
 csm_romfile_init(void)
 {
-    if (!CONFIG_CSM || !csm_compat_table.BootOrderPointer)
+    if (!CONFIG_CSM)
         return;
-    char *list = (void *)csm_compat_table.BootOrderPointer;
-    const_romfile_add("bootorder", list, strlen(list));
+    if (csm_compat_table.BootOrderPointer) {
+        char *list = (void *)csm_compat_table.BootOrderPointer;
+        const_romfile_add("bootorder", list, strlen(list));
+    }
+    if (csm_compat_table.FloppyAPointer) {
+        char *model = (void *)csm_compat_table.FloppyAPointer;
+        const_romfile_add("etc/floppy-a", model, strlen(model));
+    }
+    if (csm_compat_table.FloppyBPointer) {
+        char *model = (void *)csm_compat_table.FloppyBPointer;
+        const_romfile_add("etc/floppy-b", model, strlen(model));
+    }
+    if (csm_compat_table.ZipMode)
+        const_romfile_add("etc/zip-mode", &csm_compat_table.ZipMode,
+                          sizeof(csm_compat_table.ZipMode));
 }
 
 static void
