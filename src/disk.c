@@ -196,7 +196,18 @@ extended_access(struct bregs *regs, struct drive_s *drive_fl, u16 command)
     dop.lba = GET_FARVAR(regs->ds, param_far->lba);
     dop.command = command;
     dop.drive_fl = drive_fl;
-    if (dop.lba >= GET_FLATPTR(drive_fl->sectors)) {
+    u64 sectors = GET_FLATPTR(drive_fl->sectors);
+    struct atapi_media_s *media_fl = GET_FLATPTR(drive_fl->media);
+    if (media_fl) {
+        // An ATAPI floppy: the media now in the drive.
+        int ret = media_check(drive_fl);
+        if (ret) {
+            disk_ret(regs, ret);
+            return;
+        }
+        sectors = GET_FLATPTR(media_fl->sectors);
+    }
+    if (dop.lba >= sectors) {
         warn_invalid(regs);
         disk_ret(regs, DISK_RET_EPARAM);
         return;
@@ -733,6 +744,13 @@ floppy_13(struct bregs *regs, struct drive_s *drive_fl)
 {
     if (GET_FLATPTR(drive_fl->media) && atapi_floppy_13(regs, drive_fl))
         return;
+
+    // A disk mapped as a floppy drive (the LS-120 as A:) keeps the disk
+    // services, EDD included: DOS drivers find the device by its path.
+    if (GET_FLATPTR(drive_fl->type) != DTYPE_FLOPPY) {
+        disk_13(regs, drive_fl);
+        return;
+    }
 
     // Only limited commands are supported on floppies.
     switch (regs->ah) {
