@@ -31,6 +31,8 @@ prefix = r'''
 #define CONFIG_AHCI 1
 #define MODESEGMENT 0
 #define GET_FLATPTR(x) (x)
+#define GET_SEG(x) 0
+#define MAKE_FLATPTR(seg, off) ((void *)(off))
 #define cpu_to_be16(x) __builtin_bswap16(x)
 #define cpu_to_be32(x) __builtin_bswap32(x)
 #define cpu_to_be64(x) __builtin_bswap64(x)

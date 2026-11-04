@@ -22,10 +22,17 @@ Build the ReBIOS CSM configuration with GCC, GNU binutils, make and Python 3:
     make -j4
 
 Real hardware validation is still required for IDE-to-SATA ATAPI bridges
-and the AHCI controller path. Insert the intended medium
-before boot. Switching between 720-KB, 1.44-MB and 120-MB formats at runtime
-is not implemented: the capacity and geometry are recorded during POST.
-Low-level formatting is rejected. ZIP remains a hard disk with its MBR.
+and the AHCI controller path. Low-level formatting is rejected. ZIP remains a
+hard disk with its MBR.
+
+An LS-120 is registered as a floppy drive with or without media at POST.
+As the ATAPI Removable Media Device BIOS Specification describes, INT 13h
+checks the media before each access (TEST UNIT READY, REQUEST SENSE): no
+media returns 80h, a media change (UNIT ATTENTION) is reported by AH=16h,
+and new media is identified by READ CAPACITY, with geometry from a table of
+720-KB, 1.44-MB and 120-MB media, or else from the Flexible Disk mode page.
+AH=08h reports a 1.44-MB geometry and drive type 10h without media, and
+AH=15h reports change-line support.
 
 DOS BIOS diagnostic
 -------------------
@@ -61,6 +68,13 @@ or qualify a physical SATA bridge.
 
 DOS integration results
 -----------------------
+
+With the media-change support, an isolated 86Box PATA fixture booted MS-DOS
+7.1 (HIMEM, EMM386) from its hard disk with the LS-120 empty. INT 13h
+reported 80h for a read and a 1.44-MB/type-10h geometry; a 1.44-MB disk
+inserted afterwards was read by the BIOS and listed by DOS (DIR A:); after
+swapping in native 120-MB media, AH=16h reported the change, AH=08h the
+963/8/32 geometry, and DOS listed and read the new disk.
 
 An isolated 86Box PATA fixture booted MS-DOS 7.1 from a 1.44-MB disk in an
 ATAPI LS-120 as A:, then completed an installation through four setup disks,

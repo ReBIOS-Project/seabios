@@ -60,6 +60,9 @@ struct drive_s {
     struct chs_s pchs;  // Physical CHS
     u32 max_segment_size; //max_segment_size
     u32 max_segments;   //max_segments
+    // Removable-media state of an ATAPI floppy (LS-120), in low memory so it
+    // stays writable after POST; NULL for other drives.
+    struct atapi_media_s *media;
 };
 
 #define DISK_SECTOR_SIZE  512

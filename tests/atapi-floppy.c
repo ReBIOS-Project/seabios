@@ -16,6 +16,33 @@ int main(void)
     CHECK(!atapi_is_superdisk("LS-"));
     CHECK(!atapi_is_superdisk("LS-1"));
     CHECK(!atapi_is_superdisk("LS-12"));
+    CHECK(atapi_is_superdisk("LS-240 COSM 01"));
+    CHECK(atapi_is_superdisk("LS240"));
+    CHECK(!atapi_is_superdisk("LS-2400"));
+    CHECK(atapi_is_superdisk("TEAC UHD Floppy"));
+    CHECK(!atapi_is_superdisk("IOMEGA ZIP 100 ATAPI Floppy"));
+
+    struct chs_s chs;
+    u8 type;
+    CHECK(!atapi_floppy_geometry(2880, &chs, &type));
+    CHECK(chs.cylinder == 80 && chs.head == 2 && chs.sector == 18);
+    CHECK(type == 4);
+    CHECK(!atapi_floppy_geometry(246528, &chs, &type));
+    CHECK(type == ATAPI_FLOPPY_TYPE_ARMD);
+    CHECK(atapi_floppy_geometry(196608, &chs, &type));
+    // An LS-240 page: 262 cylinders, 32 heads, 56 sectors (469504 blocks).
+    CHECK(!atapi_floppy_page_geometry(469504, 32, 56, 262, &chs, &type));
+    CHECK(chs.cylinder == 262 && chs.head == 32 && chs.sector == 56);
+    CHECK(type == ATAPI_FLOPPY_TYPE_ARMD);
+    CHECK(atapi_floppy_page_geometry(469505, 32, 56, 262, &chs, &type));
+    CHECK(atapi_floppy_page_geometry(64 * 2 * 1100, 2, 64, 1100, &chs, &type));
+    CHECK(atapi_floppy_page_geometry(0, 0, 0, 0, &chs, &type));
+    struct atapi_media_s media = { .state = ATAPI_MEDIA_READY };
+    atapi_media_none(&media);
+    CHECK(media.state == ATAPI_MEDIA_NONE && media.sectors == 0);
+    CHECK(media.lchs.cylinder == 80 && media.lchs.head == 2);
+    CHECK(media.lchs.sector == 18);
+    CHECK(media.floppy_type == ATAPI_FLOPPY_TYPE_ARMD);
     CHECK(atapi_model_matches("ATAPI [AHCI/1: MATSHITA LS-120]", "ls-120"));
     CHECK(!atapi_model_matches("IOMEGA ZIP 100", "LS-120"));
     CHECK(!atapi_model_matches("LS-120", "LS-120 VER5"));
