@@ -82,6 +82,9 @@ csm_romfile_init(void)
         char *model = (void *)csm_compat_table.FloppyAPointer;
         const_romfile_add("etc/floppy-a", model, strlen(model));
     }
+    if (csm_compat_table.ZipMode)
+        const_romfile_add("etc/zip-mode", &csm_compat_table.ZipMode,
+                          sizeof(csm_compat_table.ZipMode));
 }
 
 static void

@@ -22,8 +22,15 @@ Build the ReBIOS CSM configuration with GCC, GNU binutils, make and Python 3:
     make -j4
 
 Real hardware validation is still required for IDE-to-SATA ATAPI bridges
-and the AHCI controller path. Low-level formatting is rejected. ZIP remains a
-hard disk with its MBR.
+and the AHCI controller path. Low-level formatting is rejected.
+
+A ZIP is mapped as the `etc/zip-mode` ROM file says (ReBIOS's `zip_mode`):
+in auto mode (the default) by its media at POST, a hard disk when sector 0
+has a partition table (in any of its four entries), else a floppy, also
+without media; or always as a floppy (2) or a hard disk (3). As with old
+BIOSes, the mapping stays until the next boot. A ZIP floppy handles media
+changes as the LS-120 does, with the 64-head/32-sector geometry of
+Iomega's BIOS translation.
 
 An LS-120 is registered as a floppy drive with or without media at POST.
 As the ATAPI Removable Media Device BIOS Specification describes, INT 13h
@@ -86,6 +93,13 @@ checks; the fixture's KEYB startup line was omitted to isolate storage.
 Use BIOS drive 00h in the BPB of a bootable LS-120 superfloppy (for example
 `mkfs.fat -D 0` when preparing the fixture on Linux). Large FAT16 media may
 otherwise default to drive 80h, and DOS SYS preserves that byte.
+
+With an LS-120 (empty, A:) and a ZIP 100 on one IDE channel, booted from
+the hard disk: partitioned ZIP media at boot (partition in slot 4 or slot 1)
+became hard disk D:; a superfloppy at boot became B:; an empty ZIP became B:
+and a superfloppy inserted afterwards was listed and read through B:. Forced
+floppy mode kept partitioned media off D:; forced hard-disk mode registered
+no drive without media.
 
 ATAPI ZIP100 and ZIP250 passed BIOS reads/writes, DOS file copies with and
 without VERIFY, SYS, and DOS 7.1 boot from active type-06 FAT16 partitions
