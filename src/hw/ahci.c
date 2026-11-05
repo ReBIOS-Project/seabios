@@ -25,6 +25,8 @@
 #define AHCI_LINK_TIMEOUT     2000 // 2 seconds, matches libata normal debounce
 #define AHCI_DETECT_TIMEOUT    200 // 200 miliseconds, time to see a device on the wire
 
+#define AHCI_UNIT_ATTENTION     -2 // ahci_command() return: packet device's unit attention
+
 // prepare sata command fis
 static void sata_prep_simple(struct sata_cmd_fis *fis, u8 command)
 {
@@ -266,10 +268,32 @@ static int ahci_command(struct ahci_port_s *port_gf, int iswrite, int isatapi,
         val = ahci_port_readl(ctrl, pnr, PORT_CMD);
         ahci_port_writel(ctrl, pnr, PORT_CMD, val | PORT_CMD_START);
     }
-    return success ? 0 : -1;
+    if (success)
+        return 0;
+    // A packet device reports its sense key in the error register's top
+    // nibble.
+    if (isatapi && (error >> 4) == SCSI_SENSE_UNIT_ATTENTION)
+        return AHCI_UNIT_ATTENTION;
+    return -1;
 }
 
 #define CDROM_CDB_SIZE 12
+
+// Read a packet device's sense data, which ends a unit attention condition
+static int
+ahci_atapi_request_sense(struct ahci_port_s *port_gf)
+{
+    struct ahci_cmd_s *cmd = port_gf->cmd;
+    struct cdbres_request_sense sense __aligned(4);
+    struct cdb_request_sense cdb;
+    memset(&cdb, 0, sizeof(cdb));
+    cdb.command = CDB_CMD_REQUEST_SENSE;
+    cdb.length = sizeof(sense);
+    memset(cmd->atapi, 0, sizeof(cmd->atapi));
+    memcpy(cmd->atapi, &cdb, CDROM_CDB_SIZE);
+    sata_prep_atapi(&cmd->fis, sizeof(sense));
+    return ahci_command(port_gf, 0, 1, &sense, sizeof(sense));
+}
 
 // Issue a prepared ATAPI command against op->buf_fl; buffer must be word aligned
 static int
@@ -280,6 +304,13 @@ ahci_atapi_issue(struct ahci_port_s *port_gf, struct disk_op_s *op,
     scsi_fill_cmd(op, cmd->atapi, CDROM_CDB_SIZE);
     sata_prep_atapi(&cmd->fis, blocksize);
     int rc = ahci_command(port_gf, 0, 1, op->buf_fl, op->count * blocksize);
+    // The device fails every command but a few until its unit attention,
+    // such as a medium change, has been read as sense data.
+    if (rc == AHCI_UNIT_ATTENTION && !ahci_atapi_request_sense(port_gf)) {
+        scsi_fill_cmd(op, cmd->atapi, CDROM_CDB_SIZE);
+        sata_prep_atapi(&cmd->fis, blocksize);
+        rc = ahci_command(port_gf, 0, 1, op->buf_fl, op->count * blocksize);
+    }
     if (rc < 0)
         return DISK_RET_EBADTRACK;
     return DISK_RET_SUCCESS;

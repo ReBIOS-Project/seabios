@@ -87,6 +87,8 @@ struct cdbres_request_sense {
 #define SCSI_TYPE_DISK  0x00
 #define SCSI_TYPE_CDROM 0x05
 
+#define SCSI_SENSE_UNIT_ATTENTION 0x06
+
 struct cdbres_inquiry {
     u8 pdt;
     u8 removable;
