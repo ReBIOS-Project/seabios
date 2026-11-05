@@ -582,20 +582,13 @@ ata_process_op(struct disk_op_s *op)
 
 #define CDROM_CDB_SIZE 12
 
-// Low-level atapi command transmit function.
-int
-ata_atapi_process_op(struct disk_op_s *op)
+#define ATAPI_UNIT_ATTENTION -4 // atapi_packet() return: unit attention
+
+// Send the packet command at cdbcmd, which is on the stack, and read the
+// op->count blocks of blocksize bytes it returns.
+static int
+atapi_packet(struct disk_op_s *op, u8 *cdbcmd, int blocksize)
 {
-    if (! CONFIG_ATA)
-        return 0;
-
-    if (op->command == CMD_WRITE || op->command == CMD_FORMAT)
-        return DISK_RET_EWRITEPROTECT;
-    u8 cdbcmd[CDROM_CDB_SIZE];
-    int blocksize = scsi_fill_cmd(op, cdbcmd, sizeof(cdbcmd));
-    if (blocksize < 0)
-        return default_process_op(op);
-
     struct atadrive_s *adrive_gf = container_of(
         op->drive_fl, struct atadrive_s, drive);
     struct ata_channel_s *chan_gf = GET_GLOBALFLAT(adrive_gf->chan_gf);
@@ -633,7 +626,12 @@ ata_atapi_process_op(struct disk_op_s *op)
         if (err != 0x20)
             dprintf(6, "send_atapi_cmd : read error (status=%02x err=%02x)\n"
                     , status, err);
-        ret = -2;
+        // A packet device reports its sense key in the error register's top
+        // nibble.
+        if ((err >> 4) == SCSI_SENSE_UNIT_ATTENTION)
+            ret = ATAPI_UNIT_ATTENTION;
+        else
+            ret = -2;
         goto fail;
     }
     if (blocksize) {
@@ -649,6 +647,45 @@ ata_atapi_process_op(struct disk_op_s *op)
 fail:
     // Enable interrupts
     outb(ATA_CB_DC_HD15, iobase2+ATA_CB_DC);
+    return ret;
+}
+
+// Read a packet device's sense data, which ends a unit attention condition
+static int
+atapi_request_sense(struct disk_op_s *op)
+{
+    u8 sense[16];
+    struct cdb_request_sense cdb;
+    memset(&cdb, 0, sizeof(cdb));
+    cdb.command = CDB_CMD_REQUEST_SENSE;
+    cdb.length = sizeof(sense);
+    struct disk_op_s dop;
+    memset(&dop, 0, sizeof(dop));
+    dop.drive_fl = op->drive_fl;
+    dop.count = 1;
+    dop.buf_fl = MAKE_FLATPTR(GET_SEG(SS), sense);
+    return atapi_packet(&dop, (u8 *)&cdb, sizeof(sense));
+}
+
+// Low-level atapi command transmit function.
+int
+ata_atapi_process_op(struct disk_op_s *op)
+{
+    if (! CONFIG_ATA)
+        return 0;
+
+    if (op->command == CMD_WRITE || op->command == CMD_FORMAT)
+        return DISK_RET_EWRITEPROTECT;
+    u8 cdbcmd[CDROM_CDB_SIZE];
+    int blocksize = scsi_fill_cmd(op, cdbcmd, sizeof(cdbcmd));
+    if (blocksize < 0)
+        return default_process_op(op);
+
+    int ret = atapi_packet(op, cdbcmd, blocksize);
+    // The device fails every command but a few until its unit attention,
+    // such as a medium change, has been read as sense data.
+    if (ret == ATAPI_UNIT_ATTENTION && !atapi_request_sense(op))
+        ret = atapi_packet(op, cdbcmd, blocksize);
     if (ret)
         return DISK_RET_EBADTRACK;
     return DISK_RET_SUCCESS;
