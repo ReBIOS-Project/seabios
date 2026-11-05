@@ -18,6 +18,67 @@
 #include "util.h" // MaxCountCPUs
 #include "x86.h" // cpuid
 
+// The power of 2 at or above count.
+static u32
+mptable_pow2(u32 count)
+{
+    return count <= 1 ? 1 : 1 << (__fls(count - 1) + 1);
+}
+
+// The APIC IDs a core spans: the logical CPUs it can have, as a power of
+// 2, or 0 where CPUID does not tell them from the cores of a package.
+static u32
+mptable_ids_per_core(u32 cpuid_signature, u32 package_ids)
+{
+    u32 maxleaf, vendor[3], eax, ebx, ecx, edx;
+    __cpuid(0, &maxleaf, &vendor[0], &vendor[2], &vendor[1]);
+
+    // The width of the x2APIC ID's logical processor field (Intel SDM
+    // 325462-093 Vol. 3A, 11.6 and 11.9.3.1).
+    if (maxleaf >= 0xb) {
+        __cpuid_count(0xb, 0, &eax, &ebx, &ecx, &edx);
+        if (ebx && ((ecx >> 8) & 0xff) == 1)
+            return 1 << (eax & 0x1f);
+    }
+
+    if (memcmp(vendor, "GenuineIntel", sizeof(vendor)) == 0) {
+        // The package's logical processor IDs over its core IDs (Intel
+        // SDM 325462-093 Vol. 3A, 11.9.4); without leaf 4 there is one
+        // core.
+        if (maxleaf < 4)
+            return 0;
+        __cpuid_count(4, 0, &eax, &ebx, &ecx, &edx);
+        u32 core_ids = ((eax >> 26) & 0x3f) + 1;
+        if (!(eax & 0x1f) || package_ids < core_ids)
+            return 0;
+        return mptable_pow2(package_ids / core_ids);
+    }
+
+    if (memcmp(vendor, "AuthenticAMD", sizeof(vendor)) == 0
+        || memcmp(vendor, "HygonGenuine", sizeof(vendor)) == 0) {
+        u32 family = (cpuid_signature >> 8) & 0xf;
+        if (family == 0xf)
+            family += (cpuid_signature >> 20) & 0xff;
+        // Before family 17h, every logical CPU is a core, as are those of
+        // family 15h's compute units (BKDG for AMD Family 15h Models
+        // 00h-0Fh 42301 rev. 3.14, CPUID Fn8000_001E_EBX).
+        if (family < 0x17)
+            return 1;
+        // From family 17h, compute units are cores and their threads
+        // logical CPUs (AMD64 Architecture Programmer's Manual Volume 3,
+        // 24594 rev. 3.38, E.4.16).
+        __cpuid(0x80000000, &eax, &ebx, &ecx, &edx);
+        if (eax < 0x8000001e)
+            return 0;
+        __cpuid(0x80000001, &eax, &ebx, &ecx, &edx);
+        if (!(ecx & (1 << 22)))
+            return 0;
+        __cpuid(0x8000001e, &eax, &ebx, &ecx, &edx);
+        return mptable_pow2(((ebx >> 8) & 0xff) + 1);
+    }
+    return 0;
+}
+
 void
 mptable_setup(void)
 {
@@ -50,9 +111,11 @@ mptable_setup(void)
     int pkgcpus = 1;
     if (cpuid_features & (1 << 28)) {
         /* Only populate the MPS tables with the first logical CPU in
-           each package */
-        pkgcpus = (ebx >> 16) & 0xff;
-        pkgcpus = 1 << (__fls(pkgcpus - 1) + 1); /* round up to power of 2 */
+           each core, or in each package where CPUID gives no cores */
+        u32 package_ids = (ebx >> 16) & 0xff;
+        pkgcpus = mptable_ids_per_core(cpuid_signature, package_ids);
+        if (!pkgcpus)
+            pkgcpus = mptable_pow2(package_ids);
     }
     u8 apic_version;
     u64 apic_base = rdmsr(0x1b);

@@ -76,6 +76,14 @@ static inline void __cpuid(u32 index, u32 *eax, u32 *ebx, u32 *ecx, u32 *edx)
         : "0" (index));
 }
 
+static inline void __cpuid_count(u32 index, u32 subleaf, u32 *eax, u32 *ebx,
+                                 u32 *ecx, u32 *edx)
+{
+    asm("cpuid"
+        : "=a" (*eax), "=b" (*ebx), "=c" (*ecx), "=d" (*edx)
+        : "0" (index), "2" (subleaf));
+}
+
 static inline u32 cr0_read(void) {
     u32 cr0;
     asm("movl %%cr0, %0" : "=r"(cr0));
