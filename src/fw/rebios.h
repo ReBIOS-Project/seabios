@@ -22,6 +22,7 @@
 #define REBIOS_HC_CALL32_ENTER 0x0004
 #define REBIOS_HC_CALL32_RETURN 0x0005
 #define REBIOS_HC_USB_DISK 0x0006
+#define REBIOS_HC_PNP_NODES 0x0007
 
 // REBIOS_HC_RESET's EBX.
 #define REBIOS_RESET_COLD 0
@@ -64,6 +65,17 @@ struct rebios_usb_disk_info {
     u32 bdf;
     char path[64];
     char description[64];
+};
+
+// REBIOS_HC_PNP_NODES's EBX is the physical address of one of these: the
+// hypervisor writes the Plug and Play BIOS's system device nodes to buffer,
+// one after the other, and their length, or 0 where size bytes do not hold
+// them.
+struct rebios_pnp_nodes {
+    u32 buffer;
+    u32 size;
+    u32 length;
+    u32 reserved;
 };
 
 extern int ReBIOSPresent;

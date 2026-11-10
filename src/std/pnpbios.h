@@ -20,5 +20,8 @@ struct pnpheader {
 } PACKED;
 
 #define FUNCTION_NOT_SUPPORTED 0x82
+#define INVALID_HANDLE 0x83
+#define BAD_PARAMETER 0x84
+#define SET_FAILED 0x85
 
 #endif // pnpheader.h
