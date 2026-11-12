@@ -249,6 +249,39 @@ call32_hypercall_setup(void)
     HaveHypercallCall32 = 1;
 }
 
+// The transitions of call32_hypercall(), through the hypercall instruction
+// insn.
+#define CALL32_HYPERCALL_ASM(insn)                                      \
+    asm volatile(                                                       \
+        /* Backup esp / set esp to flat stack location */               \
+        "  movl %%esp, %0\n"                                            \
+        "  movl %%ss, %%eax\n"                                          \
+        "  shll $4, %%eax\n"                                            \
+        "  addl %%eax, %%esp\n"                                         \
+                                                                        \
+        /* Transition to 32bit mode, call func, return to 16bit */      \
+        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "           \
+        __stringify(REBIOS_HC_CALL32_ENTER) "), %%eax\n"                \
+        "  movl $(" __stringify(BUILD_BIOS_ADDR) " + 1f), %%ebx\n"      \
+        "  " insn "\n"                                                  \
+                                                                        \
+        ASM16_SWITCH32                                                  \
+        "1:movl %1, %%eax\n"                                            \
+        "  calll *%2\n"                                                 \
+        "  movl %%eax, %1\n"                                            \
+                                                                        \
+        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "           \
+        __stringify(REBIOS_HC_CALL32_RETURN) "), %%eax\n"               \
+        "  movl $2f, %%ebx\n"                                           \
+        "  " insn "\n"                                                  \
+                                                                        \
+        /* Restore esp */                                               \
+        ASM16_BACK16                                                    \
+        "2:movl %0, %%esp\n"                                            \
+        : "=&r" (bkup_esp), "+r" (eax)                                  \
+        : "r" (func)                                                    \
+        : "eax", "ecx", "edx", "ebx", "cc", "memory")
+
 // Call a SeaBIOS C function in 32bit mode using the ReBIOS hypervisor
 static u32
 call32_hypercall(void *func, u32 eax)
@@ -257,40 +290,46 @@ call32_hypercall(void *func, u32 eax)
     dprintf(9, "call32_hypercall %p %x\n", func, eax);
     call32_prep(C16_HYPERCALL);
     u32 bkup_esp;
-    asm volatile(
-        // Backup esp / set esp to flat stack location
-        "  movl %%esp, %0\n"
-        "  movl %%ss, %%eax\n"
-        "  shll $4, %%eax\n"
-        "  addl %%eax, %%esp\n"
-
-        // Transition to 32bit mode, call func, return to 16bit
-        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "
-        __stringify(REBIOS_HC_CALL32_ENTER) "), %%eax\n"
-        "  movl $(" __stringify(BUILD_BIOS_ADDR) " + 1f), %%ebx\n"
-        "  vmcall\n"
-
-        ASM16_SWITCH32
-        "1:movl %1, %%eax\n"
-        "  calll *%2\n"
-        "  movl %%eax, %1\n"
-
-        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "
-        __stringify(REBIOS_HC_CALL32_RETURN) "), %%eax\n"
-        "  movl $2f, %%ebx\n"
-        "  vmcall\n"
-
-        // Restore esp
-        ASM16_BACK16
-        "2:movl %0, %%esp\n"
-        : "=&r" (bkup_esp), "+r" (eax)
-        : "r" (func)
-        : "eax", "ecx", "edx", "ebx", "cc", "memory");
+    if (GET_GLOBAL(ReBIOSVmmcall))
+        CALL32_HYPERCALL_ASM("vmmcall");
+    else
+        CALL32_HYPERCALL_ASM("vmcall");
     call32_post();
 
     dprintf(9, "call32_hypercall done %p %x\n", func, eax);
     return eax;
 }
+
+// The transitions of call16_hypercall(), through the hypercall instruction
+// insn.
+#define CALL16_HYPERCALL_ASM(insn)                                      \
+    asm volatile(                                                       \
+        /* Restore esp */                                               \
+        "  subl %0, %%esp\n"                                            \
+                                                                        \
+        /* Transition to 16bit mode, call func, return to 32bit */      \
+        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "           \
+        __stringify(REBIOS_HC_CALL32_RETURN) "), %%eax\n"               \
+        "  movl $(1f - " __stringify(BUILD_BIOS_ADDR) "), %%ebx\n"      \
+        "  " insn "\n"                                                  \
+                                                                        \
+        ASM32_SWITCH16                                                  \
+        "1:movl %1, %%eax\n"                                            \
+        "  movl %3, %%ecx\n"                                            \
+        "  calll _cfunc16_call16_helper\n"                              \
+        "  movl %%eax, %1\n"                                            \
+                                                                        \
+        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "           \
+        __stringify(REBIOS_HC_CALL32_ENTER) "), %%eax\n"                \
+        "  movl $2f, %%ebx\n"                                           \
+        "  " insn "\n"                                                  \
+                                                                        \
+        /* Set esp to flat stack location */                            \
+        ASM32_BACK32                                                    \
+        "2:addl %0, %%esp\n"                                            \
+        : "+r" (stackoffset), "+r" (eax), "+d" (edx)                    \
+        : "r" (func)                                                    \
+        : "eax", "ecx", "ebx", "cc", "memory")
 
 // Call a SeaBIOS C function in 16bit mode using the ReBIOS hypervisor
 static u32
@@ -300,33 +339,10 @@ call16_hypercall(u32 eax, u32 edx, void *func)
     func -= BUILD_BIOS_ADDR;
     dprintf(9, "call16_hypercall %p %x %x\n", func, eax, edx);
     u32 stackoffset = Call16Data.ss << 4;
-    asm volatile(
-        // Restore esp
-        "  subl %0, %%esp\n"
-
-        // Transition to 16bit mode, call func, return to 32bit
-        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "
-        __stringify(REBIOS_HC_CALL32_RETURN) "), %%eax\n"
-        "  movl $(1f - " __stringify(BUILD_BIOS_ADDR) "), %%ebx\n"
-        "  vmcall\n"
-
-        ASM32_SWITCH16
-        "1:movl %1, %%eax\n"
-        "  movl %3, %%ecx\n"
-        "  calll _cfunc16_call16_helper\n"
-        "  movl %%eax, %1\n"
-
-        "  movl $(" __stringify(REBIOS_HYPERCALL_MAGIC) " | "
-        __stringify(REBIOS_HC_CALL32_ENTER) "), %%eax\n"
-        "  movl $2f, %%ebx\n"
-        "  vmcall\n"
-
-        // Set esp to flat stack location
-        ASM32_BACK32
-        "2:addl %0, %%esp\n"
-        : "+r" (stackoffset), "+r" (eax), "+d" (edx)
-        : "r" (func)
-        : "eax", "ecx", "ebx", "cc", "memory");
+    if (GET_GLOBAL(ReBIOSVmmcall))
+        CALL16_HYPERCALL_ASM("vmmcall");
+    else
+        CALL16_HYPERCALL_ASM("vmcall");
     return eax;
 }
 

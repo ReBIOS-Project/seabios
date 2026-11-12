@@ -6,15 +6,16 @@
 #ifndef __REBIOS_H
 #define __REBIOS_H
 
+#include "biosvar.h" // GET_GLOBAL
 #include "types.h" // u32
 
 // The Compatibility16 table's HypervisorInterface field, when the CSM16 runs
 // under the ReBIOS hypervisor.
 #define REBIOS_INTERFACE 0x52420001
 
-// A hypercall is VMCALL with the magic in the top half of EAX and the function
-// in its bottom half. On AMD processors, where VMCALL raises #UD, the
-// hypervisor catches the exception and takes it as the hypercall.
+// A hypercall is VMCALL on Intel processors and VMMCALL on AMD's, where VMCALL
+// raises #UD, with the magic in the top half of EAX and the function in its
+// bottom half.
 #define REBIOS_HYPERCALL_MAGIC 0x52420000
 #define REBIOS_HC_DEBUG_PUTC 0x0000
 #define REBIOS_HC_RESET 0x0002
@@ -79,11 +80,19 @@ struct rebios_pnp_nodes {
 };
 
 extern int ReBIOSPresent;
+// Whether hypercalls are VMMCALL, as on AMD processors, rather than VMCALL.
+extern int ReBIOSVmmcall;
 
 static inline void rebios_hypercall(u32 function, u32 ebx)
 {
-    asm volatile("vmcall"
-                 : : "a"(REBIOS_HYPERCALL_MAGIC | function), "b"(ebx) : "memory");
+    if (GET_GLOBAL(ReBIOSVmmcall))
+        asm volatile("vmmcall"
+                     : : "a"(REBIOS_HYPERCALL_MAGIC | function), "b"(ebx)
+                     : "memory");
+    else
+        asm volatile("vmcall"
+                     : : "a"(REBIOS_HYPERCALL_MAGIC | function), "b"(ebx)
+                     : "memory");
 }
 
 #endif // rebios.h

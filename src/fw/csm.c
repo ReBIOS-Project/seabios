@@ -25,6 +25,7 @@
 #include "std/pnpbios.h" // PNP_SIGNATURE
 #include "string.h" // strlen
 #include "util.h" // copy_smbios_21
+#include "x86.h" // cpuid
 
 #define UINT8 u8
 #define UINT16 u16
@@ -49,6 +50,7 @@ EFI_TO_COMPATIBILITY16_BOOT_TABLE *csm_boot_table;
 static u16 PICMask = PIC_IRQMASK_DEFAULT;
 
 int ReBIOSPresent VARFSEG;
+int ReBIOSVmmcall VARFSEG;
 static int oprom_hw_init_done;
 
 extern void __csm_return(struct bregs *regs) __noreturn;
@@ -363,8 +365,15 @@ handle_csm(struct bregs *regs)
     if (!CONFIG_CSM)
         return;
 
-    if (csm_compat_table.HypervisorInterface == REBIOS_INTERFACE)
+    if (csm_compat_table.HypervisorInterface == REBIOS_INTERFACE
+        && !ReBIOSPresent) {
         ReBIOSPresent = 1;
+        // "AuthenticAMD"
+        u32 eax, ebx, ecx, edx;
+        cpuid(0, &eax, &ebx, &ecx, &edx);
+        ReBIOSVmmcall = (ebx == 0x68747541 && edx == 0x69746e65
+                         && ecx == 0x444d4163);
+    }
 
     dprintf(3, "handle_csm regs %p AX=%04x\n", regs, regs->ax);
 
