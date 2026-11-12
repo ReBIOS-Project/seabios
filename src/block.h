@@ -47,6 +47,7 @@ struct chs_s {
 
 struct drive_s {
     u8 type;            // Driver type (DTYPE_*)
+    u8 floppy_slot;     // FLOPPY_SLOT_* bits: floppy_a/floppy_b name it.
     u8 floppy_type;     // Type of floppy (only for floppy drives).
     struct chs_s lchs;  // Logical CHS
     u64 sectors;        // Total sectors count
@@ -59,6 +60,9 @@ struct drive_s {
     struct chs_s pchs;  // Physical CHS
     u32 max_segment_size; //max_segment_size
     u32 max_segments;   //max_segments
+    // Removable-media state of an ATAPI floppy (LS-120), in low memory so it
+    // stays writable after POST; NULL for other drives.
+    struct atapi_media_s *media;
 };
 
 #define DISK_SECTOR_SIZE  512
@@ -86,6 +90,10 @@ struct drive_s {
 #define DTYPE_SDCARD       0x90
 #define DTYPE_NVME         0x91
 #define DTYPE_REBIOS_USB   0x92
+
+// Drives reserved as BIOS floppy drive 00h (A:) or 01h (B:).
+#define FLOPPY_SLOT_A 0x01
+#define FLOPPY_SLOT_B 0x02
 
 #define MAXDESCSIZE 80
 

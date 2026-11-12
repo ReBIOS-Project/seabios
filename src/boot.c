@@ -17,6 +17,7 @@
 #include "malloc.h" // free
 #include "output.h" // dprintf
 #include "romfile.h" // romfile_loadint
+#include "hw/atapi-floppy.h" // atapi_model_upper
 #include "std/disk.h" // struct mbr_s
 #include "string.h" // memset
 #include "util.h" // irqtimer_calc
@@ -93,6 +94,39 @@ build_ata_path(char *buf, int max,
     p = build_pci_path(buf, max, "*", pci);
     p += snprintf(p, buf+max-p, "/drive@%x/disk@%x", chanid, slave);
     return p;
+}
+
+
+// FLOPPY_SLOT_* bits of an ATA or AHCI drive that etc/floppy-a or
+// etc/floppy-b names by its port rather than its model: by its name in
+// SeaBIOS's log ("ata1-0", "AHCI/2"), or by its boot order path
+// ("/pci@i0cf8/*@17/drive@2/disk@0"). Two drives of one model are told apart
+// this way.
+int
+floppy_slot_port(struct pci_device *pci, int chanid, int slave, const char *name)
+{
+    static const char *const files[] = { "etc/floppy-a", "etc/floppy-b" };
+    char path[256];
+    if (pci)
+        build_ata_path(path, sizeof(path), pci, chanid, slave);
+    int slot = 0, i;
+    for (i = 0; i < ARRAY_SIZE(files); i++) {
+        char *wanted = romfile_loadfile(files[i], NULL);
+        if (!wanted)
+            continue;
+        const char *w = wanted, *n = name;
+        while (*w && *n && atapi_model_upper(*w) == atapi_model_upper(*n)) {
+            w++;
+            n++;
+        }
+        const char *rest;
+        if ((*wanted && !*w && !*n)
+            || (pci && wanted[0] == '/' && (rest = glob_prefix(path, wanted))
+                && !*rest))
+            slot |= 1 << i;
+        free(wanted);
+    }
+    return slot;
 }
 
 
@@ -835,8 +869,13 @@ add_bev(int type, u32 vector)
 {
     if (type == IPL_TYPE_HARDDISK && HaveHDBoot++)
         return;
-    if (type == IPL_TYPE_FLOPPY && HaveFDBoot++)
-        return;
+    if (type == IPL_TYPE_FLOPPY) {
+        int i;
+        for (i = 0; i < BEVCount; i++)
+            if (BEV[i].type == type && BEV[i].vector == vector)
+                return;
+        HaveFDBoot++;
+    }
     if (BEVCount >= ARRAY_SIZE(BEV))
         return;
     struct bev_s *bev = &BEV[BEVCount++];
@@ -855,8 +894,38 @@ bcv_prepboot(void)
     if (haltprio >= 0)
         bootentry_add(IPL_TYPE_HALT, haltprio, 0, "HALT");
 
+    // Reserve the ATAPI floppies floppy_a and floppy_b name as A: and B:,
+    // independently of boot order. Of several drives a name matches (two
+    // LS-120s of one model for both), the first in boot order is taken.
+    struct bootentry_s *pos, *floppy_a = NULL, *floppy_b = NULL, *first = NULL;
+    hlist_for_each_entry(pos, &BootList, node) {
+        if (pos->type != IPL_TYPE_FLOPPY)
+            continue;
+        u8 slot = pos->drive->floppy_slot;
+        if (!floppy_a && (slot & FLOPPY_SLOT_A))
+            floppy_a = pos;
+        else if (!floppy_b && (slot & FLOPPY_SLOT_B))
+            floppy_b = pos;
+    }
+    if (floppy_b && !floppy_a) {
+        // B: needs an A: before it: the first other floppy drive.
+        hlist_for_each_entry(pos, &BootList, node) {
+            if (pos->type == IPL_TYPE_FLOPPY && pos != floppy_b) {
+                first = pos;
+                break;
+            }
+        }
+        if (!first)
+            dprintf(1, "floppy_b: no other floppy drive for A:\n");
+    }
+    if (floppy_a)
+        map_floppy_drive(floppy_a->drive);
+    if (first)
+        map_floppy_drive(first->drive);
+    if (floppy_b)
+        map_floppy_drive(floppy_b->drive);
+
     // Map drives and populate BEV list
-    struct bootentry_s *pos;
     hlist_for_each_entry(pos, &BootList, node) {
         switch (pos->type) {
         case IPL_TYPE_BCV:
@@ -864,8 +933,10 @@ bcv_prepboot(void)
             add_bev(IPL_TYPE_HARDDISK, 0);
             break;
         case IPL_TYPE_FLOPPY:
-            map_floppy_drive(pos->drive);
-            add_bev(IPL_TYPE_FLOPPY, 0);
+            if (pos != floppy_a && pos != floppy_b && pos != first)
+                map_floppy_drive(pos->drive);
+            add_bev(IPL_TYPE_FLOPPY,
+                    getDriveId(EXTTYPE_FLOPPY, pos->drive));
             break;
         case IPL_TYPE_HARDDISK:
             map_hd_drive(pos->drive);
@@ -1025,7 +1096,7 @@ do_boot(int seq_nr)
     switch (ie->type) {
     case IPL_TYPE_FLOPPY:
         printf("Booting from Floppy...\n");
-        boot_disk(0x00, CheckFloppySig);
+        boot_disk(ie->vector, CheckFloppySig);
         break;
     case IPL_TYPE_HARDDISK:
         printf("Booting from Hard Disk...\n");

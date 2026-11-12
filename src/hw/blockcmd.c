@@ -6,6 +6,7 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "block.h" // struct disk_op_s
+#include "atapi-floppy.h" // atapi_floppy_setup
 #include "blockcmd.h" // struct cdb_request_sense
 #include "byteorder.h" // be32_to_cpu
 #include "farptr.h" // GET_FLATPTR
@@ -14,6 +15,8 @@
 #include "string.h" // memset
 #include "util.h" // timer_calc
 #include "malloc.h"
+#include "romfile.h" // romfile_loadfile
+#include "stacks.h" // yield
 
 
 /****************************************************************
@@ -118,6 +121,167 @@ cdb_mode_sense_geom(struct disk_op_s *op, struct cdbres_mode_sense_geom *data)
 
 
 /****************************************************************
+ * ATAPI floppy (LS-120) media handling, in 16bit and 32bit mode
+ ****************************************************************/
+
+// A flat pointer to a variable on the current stack.
+#define STACK_FLAT(p) ((void*)(MODESEGMENT                               \
+                               ? (u32)MAKE_FLATPTR(GET_SEG(SS), (p))    \
+                               : (u32)(p)))
+
+// Issue a CDB whose data (if any) is read into a buffer on the stack.
+static int
+atapi_media_cdb(struct drive_s *drive_fl, void *cdb, void *buf, u16 len)
+{
+    struct disk_op_s op;
+    memset(&op, 0, sizeof(op));
+    op.drive_fl = drive_fl;
+    op.command = CMD_SCSI;
+    op.cdbcmd = STACK_FLAT(cdb);
+    op.buf_fl = len ? STACK_FLAT(buf) : NULL;
+    op.count = len ? 1 : 0;
+    op.blocksize = len;
+    return process_op(&op);
+}
+
+struct atapi_mode_flexible {
+    u8 header[8];       // MODE SENSE (10) parameter header.
+    u8 page_code;
+    u8 page_length;
+    u16 transfer_rate;
+    u8 heads;
+    u8 sectors;
+    u16 bytes_per_sector;
+    u16 cylinders;
+    u8 unused[22];
+} PACKED;
+
+// Identify the inserted media: capacity, then CHS geometry.
+static int
+atapi_media_identify(struct drive_s *drive_fl, struct atapi_media_s *media_fl)
+{
+    struct cdb_read_capacity cap;
+    memset(&cap, 0, sizeof(cap));
+    cap.command = CDB_CMD_READ_CAPACITY;
+    struct cdbres_read_capacity capdata __aligned(4);
+    memset(&capdata, 0, sizeof(capdata));
+    int ret = atapi_media_cdb(drive_fl, &cap, &capdata, sizeof(capdata));
+    if (ret)
+        return ret;
+    u32 sectors = be32_to_cpu(capdata.sectors) + 1;
+    if (be32_to_cpu(capdata.blksize) != DISK_SECTOR_SIZE || !sectors) {
+        SET_FLATPTR(media_fl->state, ATAPI_MEDIA_UNSUPPORTED);
+        return DISK_RET_EBADTRACK;
+    }
+
+    struct chs_s chs;
+    u8 type;
+    if (atapi_floppy_geometry(sectors, &chs, &type)) {
+        struct cdb_mode_sense ms;
+        memset(&ms, 0, sizeof(ms));
+        ms.command = CDB_CMD_MODE_SENSE;
+        ms.page = 0x05; // Flexible Disk page, current values.
+        ms.count = cpu_to_be16(sizeof(struct atapi_mode_flexible));
+        struct atapi_mode_flexible page __aligned(4);
+        memset(&page, 0, sizeof(page));
+        ret = atapi_media_cdb(drive_fl, &ms, &page, sizeof(page));
+        if ((ret || (page.page_code & 0x3f) != 0x05
+             || atapi_floppy_page_geometry(sectors, page.heads, page.sectors
+                                           , be16_to_cpu(page.cylinders)
+                                           , &chs, &type))
+            && atapi_floppy_large_geometry(sectors, &chs, &type)) {
+            dprintf(1, "ATAPI floppy: no geometry for %u sectors\n", sectors);
+            SET_FLATPTR(media_fl->state, ATAPI_MEDIA_UNSUPPORTED);
+            return DISK_RET_EBADTRACK;
+        }
+    }
+    dprintf(3, "ATAPI floppy: media %u sectors, CHS %u/%u/%u\n", sectors
+            , chs.cylinder, chs.head, chs.sector);
+    SET_FLATPTR(media_fl->sectors, sectors);
+    SET_FLATPTR(media_fl->lchs.cylinder, chs.cylinder);
+    SET_FLATPTR(media_fl->lchs.head, chs.head);
+    SET_FLATPTR(media_fl->lchs.sector, chs.sector);
+    SET_FLATPTR(media_fl->floppy_type, type);
+    SET_FLATPTR(media_fl->state, ATAPI_MEDIA_READY);
+    return DISK_RET_SUCCESS;
+}
+
+static void
+atapi_media_gone(struct atapi_media_s *media_fl)
+{
+    struct atapi_media_s empty;
+    atapi_media_none(&empty);
+    if (GET_FLATPTR(media_fl->state) != ATAPI_MEDIA_NONE)
+        SET_FLATPTR(media_fl->changed, 1);
+    SET_FLATPTR(media_fl->state, empty.state);
+    SET_FLATPTR(media_fl->sectors, empty.sectors);
+    SET_FLATPTR(media_fl->lchs.cylinder, empty.lchs.cylinder);
+    SET_FLATPTR(media_fl->lchs.head, empty.lchs.head);
+    SET_FLATPTR(media_fl->lchs.sector, empty.lchs.sector);
+    SET_FLATPTR(media_fl->floppy_type, empty.floppy_type);
+}
+
+// Check the media of an ATAPI floppy before an INT 13h access, as the ARMD
+// specification has the BIOS do: TEST UNIT READY, and on a media change (or
+// newly inserted media) identify the media again. Returns DISK_RET_SUCCESS
+// with media ready, DISK_RET_ETIMEOUT without media (DOS: "not ready"), or
+// DISK_RET_EBADTRACK for media of unknown geometry.
+int
+atapi_media_check(struct drive_s *drive_fl)
+{
+    struct atapi_media_s *media_fl = GET_FLATPTR(drive_fl->media);
+    if (!media_fl)
+        return DISK_RET_SUCCESS;
+
+    u32 end = timer_calc(5000);
+    int attentions = 0;
+    for (;;) {
+        struct cdb_request_sense tur;
+        memset(&tur, 0, sizeof(tur));
+        tur.command = CDB_CMD_TEST_UNIT_READY;
+        if (!atapi_media_cdb(drive_fl, &tur, NULL, 0))
+            break;
+
+        struct cdb_request_sense rs;
+        memset(&rs, 0, sizeof(rs));
+        rs.command = CDB_CMD_REQUEST_SENSE;
+        rs.length = sizeof(struct cdbres_request_sense);
+        struct cdbres_request_sense sense __aligned(4);
+        memset(&sense, 0, sizeof(sense));
+        int ret = atapi_media_cdb(drive_fl, &rs, &sense, sizeof(sense));
+        u8 key = sense.flags & 0x0f;
+        if (!ret && key == 0x06 && attentions++ < 4) {
+            // UNIT ATTENTION: media changed (or a reset); it is cleared now.
+            SET_FLATPTR(media_fl->changed, 1);
+            SET_FLATPTR(media_fl->state, ATAPI_MEDIA_NONE);
+            continue;
+        }
+        if (!ret && key == 0x02 && sense.asc == 0x3a) {
+            // MEDIUM NOT PRESENT
+            atapi_media_gone(media_fl);
+            return DISK_RET_ETIMEOUT;
+        }
+        // Becoming ready, or a transient error: retry for a while.
+        if (timer_check(end)) {
+            dprintf(1, "ATAPI floppy: not ready (key %x asc %x ascq %x)\n"
+                    , key, sense.asc, sense.ascq);
+            atapi_media_gone(media_fl);
+            return DISK_RET_ETIMEOUT;
+        }
+        yield();
+    }
+
+    u8 state = GET_FLATPTR(media_fl->state);
+    if (state == ATAPI_MEDIA_READY)
+        return DISK_RET_SUCCESS;
+    if (state == ATAPI_MEDIA_UNSUPPORTED)
+        return DISK_RET_EBADTRACK;
+    SET_FLATPTR(media_fl->changed, 1);
+    return atapi_media_identify(drive_fl, media_fl);
+}
+
+
+/****************************************************************
  * Main SCSI commands
  ****************************************************************/
 
@@ -146,9 +310,12 @@ scsi_fill_cmd(struct disk_op_s *op, void *cdbcmd, int maxcdb)
         }
         return GET_FLATPTR(op->drive_fl->blksize);
     case CMD_SCSI:
+        // op->cdbcmd is a flat pointer, as 32bit code passes it and
+        // atapi_media_check() makes it in 16bit mode.
         if (MODESEGMENT)
-            return -1;
-        memcpy(cdbcmd, op->cdbcmd, maxcdb);
+            memcpy_fl(MAKE_FLATPTR(GET_SEG(SS), cdbcmd), op->cdbcmd, maxcdb);
+        else
+            memcpy(cdbcmd, op->cdbcmd, maxcdb);
         return op->blocksize;
     default:
         return -1;
@@ -160,7 +327,7 @@ int
 scsi_is_read(struct disk_op_s *op)
 {
     return op->command == CMD_READ || (
-        !MODESEGMENT && op->command == CMD_SCSI && op->blocksize);
+        op->command == CMD_SCSI && op->blocksize);
 }
 
 // Check if a SCSI device is ready to receive commands
@@ -314,6 +481,24 @@ int scsi_sequential_scan(struct drive_s *tmp_drive, u32 maxluns,
     return ret;
 }
 
+// Whether the media's sector 0 has a partition table (a ZIP auto mode).
+static int
+atapi_zip_partitioned(struct disk_op_s *dop)
+{
+    u8 *buf = malloc_tmp(DISK_SECTOR_SIZE);
+    if (!buf) {
+        warn_noalloc();
+        return 0;
+    }
+    dop->command = CMD_READ;
+    dop->lba = 0;
+    dop->count = 1;
+    dop->buf_fl = buf;
+    int has_mbr = !process_op(dop) && atapi_media_has_mbr(buf);
+    free(buf);
+    return has_mbr;
+}
+
 // Validate drive, find block size / sector count, and register drive.
 int
 scsi_drive_setup(struct drive_s *drive, const char *s, int prio)
@@ -354,7 +539,67 @@ scsi_drive_setup(struct drive_s *drive, const char *s, int prio)
     if (pdt != SCSI_TYPE_DISK)
         return -1;
 
+    // Some bridges (and emulators) have a generic ATA model but preserve
+    // the drive's identity in INQUIRY.
+    int is_atapi = drive->type == DTYPE_ATA_ATAPI
+        || drive->type == DTYPE_AHCI_ATAPI;
+    // Named by its port (floppy_slot_port), or else by its model.
+    int floppy_slot = is_atapi ? drive->floppy_slot : 0;
+    if (is_atapi) {
+        static const char *const files[] = { "etc/floppy-a", "etc/floppy-b" };
+        int i;
+        for (i = 0; i < ARRAY_SIZE(files); i++) {
+            char *wanted = romfile_loadfile(files[i], NULL);
+            // Port names are matched by floppy_slot_port alone.
+            int port = wanted && (wanted[0] == '/'
+                                  || atapi_model_matches(wanted, "AHCI/")
+                                  || (atapi_model_upper(wanted[0]) == 'A'
+                                      && atapi_model_upper(wanted[1]) == 'T'
+                                      && atapi_model_upper(wanted[2]) == 'A'
+                                      && wanted[3] >= '0' && wanted[3] <= '9'));
+            if (wanted && *wanted && !port && (atapi_model_matches(s, wanted)
+                                      || atapi_model_matches(product, wanted)))
+                floppy_slot |= 1 << i;
+            free(wanted);
+        }
+    }
+    // A ZIP is a floppy or a hard disk as etc/zip-mode says; in auto mode
+    // (the default) by its media below.
+    int zip = is_atapi && !floppy_slot && atapi_is_zip(vendor, product, s);
+    int zip_mode = zip ? romfile_loadint("etc/zip-mode", ATAPI_ZIP_AUTO) : 0;
+    if (zip)
+        dprintf(1, "%s: ZIP mode %d\n", s, zip_mode);
+    // A drive named by floppy_a or floppy_b is a floppy even if its model
+    // does not say so.
+    int atapi_floppy = is_atapi
+        && (drive->floppy_type || atapi_is_superdisk(product) || floppy_slot
+            || (zip && zip_mode != ATAPI_ZIP_HDD));
+    if (atapi_floppy) {
+        drive->floppy_type = ATAPI_FLOPPY_TYPE_ARMD;
+        drive->floppy_slot = floppy_slot;
+        drive->media = malloc_low(sizeof(*drive->media));
+        if (!drive->media) {
+            warn_noalloc();
+            return -1;
+        }
+        memset(drive->media, 0, sizeof(*drive->media));
+        atapi_media_none(drive->media);
+    }
+
     ret = scsi_is_ready(&dop);
+    if (ret && atapi_floppy) {
+        // Like the floppy drive it stands in for, the drive is there without
+        // media; INT 13h finds media inserted later (ARMD specification).
+        dprintf(1, "%s: no media, registered as an empty floppy\n", s);
+        drive->blksize = DISK_SECTOR_SIZE;
+        drive->sectors = 2880;
+        atapi_floppy_setup(drive);
+        drive->floppy_type = ATAPI_FLOPPY_TYPE_ARMD;
+        char *desc = znprintf(MAXDESCSIZE, "%s Drive %s %s %s"
+                              , s, vendor, product, rev);
+        boot_add_floppy(drive, desc, prio);
+        return 0;
+    }
     if (ret) {
         dprintf(1, "scsi_is_ready returned %d\n", ret);
         return ret;
@@ -409,8 +654,45 @@ scsi_drive_setup(struct drive_s *drive, const char *s, int prio)
         }
     }
 
+    if (atapi_floppy && zip && zip_mode == ATAPI_ZIP_AUTO
+        && atapi_zip_partitioned(&dop)) {
+        dprintf(1, "%s: partitioned ZIP media, mapped as a hard disk\n", s);
+        free(drive->media);
+        drive->media = NULL;
+        drive->floppy_type = 0;
+        atapi_floppy = 0;
+    }
+
     char *desc = znprintf(MAXDESCSIZE, "%s Drive %s %s %s"
                           , s, vendor, product, rev);
-    boot_add_hd(drive, desc, prio);
+    if (atapi_floppy) {
+        // Media of unknown capacity is looked at again at its first access
+        // (the Flexible Disk page); the drive itself stays registered.
+        drive->blksize = DISK_SECTOR_SIZE;
+        if (atapi_floppy_setup(drive)) {
+            dprintf(1, "%s: media of unknown geometry\n", s);
+            drive->sectors = 2880;
+            atapi_floppy_setup(drive);
+        } else {
+            struct atapi_media_s *media = drive->media;
+            media->state = ATAPI_MEDIA_READY;
+            media->sectors = drive->sectors;
+            media->lchs = drive->lchs;
+            media->floppy_type = drive->floppy_type;
+        }
+        boot_add_floppy(drive, desc, prio);
+    } else {
+        if (drive->type == DTYPE_ATA_ATAPI || drive->type == DTYPE_AHCI_ATAPI)
+            atapi_zip_setup(drive, vendor, product, s);
+        boot_add_hd(drive, desc, prio);
+    }
     return 0;
+}
+
+// IDENTIFY PACKET DEVICE's model survives bridges which change INQUIRY.
+int
+atapi_drive_setup(struct drive_s *drive, const char *model, int prio)
+{
+    drive->floppy_type = atapi_is_superdisk(model) ? ATAPI_FLOPPY_TYPE_ARMD : 0;
+    return scsi_drive_setup(drive, model, prio);
 }
