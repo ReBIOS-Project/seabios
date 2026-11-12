@@ -306,8 +306,10 @@ ahci_atapi_issue(struct ahci_port_s *port_gf, struct disk_op_s *op,
     int rc = ahci_command(port_gf, op->command == CMD_WRITE, 1
                           , op->buf_fl, op->count * blocksize);
     // The device fails every command but a few until its unit attention,
-    // such as a medium change, has been read as sense data.
-    if (rc == AHCI_UNIT_ATTENTION && !ahci_atapi_request_sense(port_gf)) {
+    // such as a medium change, has been read as sense data. A floppy-mapped
+    // drive's media check reads it itself, to see the change.
+    if (rc == AHCI_UNIT_ATTENTION && !op->drive_fl->media
+        && !ahci_atapi_request_sense(port_gf)) {
         scsi_fill_cmd(op, cmd->atapi, CDROM_CDB_SIZE);
         sata_prep_atapi(&cmd->fis, blocksize);
         rc = ahci_command(port_gf, op->command == CMD_WRITE, 1

@@ -686,8 +686,10 @@ ata_atapi_process_op(struct disk_op_s *op)
 
     int ret = atapi_packet(op, cdbcmd, blocksize);
     // The device fails every command but a few until its unit attention,
-    // such as a medium change, has been read as sense data.
-    if (ret == ATAPI_UNIT_ATTENTION && !atapi_request_sense(op))
+    // such as a medium change, has been read as sense data. A floppy-mapped
+    // drive's media check reads it itself, to see the change.
+    if (ret == ATAPI_UNIT_ATTENTION && !GET_FLATPTR(op->drive_fl->media)
+        && !atapi_request_sense(op))
         ret = atapi_packet(op, cdbcmd, blocksize);
     if (ret)
         return DISK_RET_EBADTRACK;

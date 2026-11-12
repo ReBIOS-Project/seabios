@@ -49,6 +49,12 @@ u8 *bounce_buf_fl = bounce;
 static unsigned int calls, bad, fail_on;
 static const u8 *expected;
 int default_process_op(struct disk_op_s *op) { (void)op; return DISK_RET_EPARAM; }
+#define AHCI_UNIT_ATTENTION -2
+static int ahci_atapi_request_sense(struct ahci_port_s *port)
+{
+    (void)port;
+    return -1;
+}
 static int ahci_command(struct ahci_port_s *port, int write, int atapi,
                         void *buffer, u32 length)
 {
