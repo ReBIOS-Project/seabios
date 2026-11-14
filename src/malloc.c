@@ -391,6 +391,14 @@ rom_reserve(u32 size)
     return (void*)RomEnd;
 }
 
+// Mark the area below an optionrom that the caller placed at addr as in use.
+void
+rom_placed(u32 addr)
+{
+    if (addr > RomEnd)
+        RomEnd = addr;
+}
+
 // Confirm space as in use by an optionrom.
 int
 rom_confirm(u32 size)

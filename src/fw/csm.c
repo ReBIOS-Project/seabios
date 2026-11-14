@@ -274,6 +274,8 @@ handle_csm_0005(struct bregs *regs)
     rom = MAKE_FLATPTR(table->OpromSegment, 0);
     bdf = pci_bus_devfn_to_bdf(table->PciBus, table->PciDeviceFunction);
 
+    // The caller placed the rom; what lies below it is in use.
+    rom_placed((u32)rom);
     rom_reserve(rom->size * 512);
 
     // Set up PIC, PIT, timer, and keyboard so option ROMs can use
