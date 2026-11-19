@@ -70,15 +70,20 @@ bochsvga_list_modes(u16 seg, u16 *dest, u16 *last)
  * Helper functions
  ****************************************************************/
 
+// The DISPI index port, its data port following it.
+static u16 dispi_port VAR16 = VBE_DISPI_IOPORT_INDEX;
+
 static inline u16 dispi_read(u16 reg)
 {
-    outw(reg, VBE_DISPI_IOPORT_INDEX);
-    return inw(VBE_DISPI_IOPORT_DATA);
+    u16 port = GET_GLOBAL(dispi_port);
+    outw(reg, port);
+    return inw(port + 1);
 }
 static inline void dispi_write(u16 reg, u16 val)
 {
-    outw(reg, VBE_DISPI_IOPORT_INDEX);
-    outw(val, VBE_DISPI_IOPORT_DATA);
+    u16 port = GET_GLOBAL(dispi_port);
+    outw(reg, port);
+    outw(val, port + 1);
 }
 
 static u8
@@ -306,6 +311,35 @@ bochsvga_set_mode(struct vgamode_s *vmode_g, int flags)
  * Init
  ****************************************************************/
 
+static int
+dispi_detect(void)
+{
+    dispi_write(VBE_DISPI_INDEX_ID, VBE_DISPI_ID0);
+    return dispi_read(VBE_DISPI_INDEX_ID) == VBE_DISPI_ID0;
+}
+
+// A stdvga may also decode the DISPI ports in an I/O BAR 4, which reaches
+// it behind a bridge, where the legacy ports do not.
+static int
+dispi_find(void)
+{
+    int bdf = GET_GLOBAL(VgaBDF);
+    if (CONFIG_VGA_PCI && bdf >= 0
+        && pci_config_readw(bdf, PCI_VENDOR_ID) == 0x1234) {
+        u32 bar = pci_config_readl(bdf, PCI_BASE_ADDRESS_4);
+        u16 port = bar & PCI_BASE_ADDRESS_IO_MASK;
+        if ((bar & PCI_BASE_ADDRESS_SPACE_IO) && port) {
+            SET_VGA(dispi_port, port);
+            if (dispi_detect()) {
+                dprintf(1, "VBE DISPI: ports at 0x%x\n", port);
+                return 1;
+            }
+        }
+    }
+    SET_VGA(dispi_port, VBE_DISPI_IOPORT_INDEX);
+    return dispi_detect();
+}
+
 int
 bochsvga_setup(void)
 {
@@ -314,8 +348,7 @@ bochsvga_setup(void)
         return ret;
 
     /* Sanity checks */
-    dispi_write(VBE_DISPI_INDEX_ID, VBE_DISPI_ID0);
-    if (dispi_read(VBE_DISPI_INDEX_ID) != VBE_DISPI_ID0) {
+    if (!dispi_find()) {
         dprintf(1, "No VBE DISPI interface detected, falling back to stdvga\n");
         return 0;
     }
